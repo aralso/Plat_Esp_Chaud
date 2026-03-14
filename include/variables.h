@@ -2,29 +2,48 @@
 
 #define VARIABLES_H
 
-#include <Arduino.h>
-#include <ctype.h>
-#include <stdbool.h>
-#include <stddef.h>
-#include <stdint.h>
 
 // variables externes
-#include <ArduinoJson.h>
-#include <HTTPClient.h>
-#include <Preferences.h>  // Inclure la librairie nécessaire
 
-// #include <OneWire.h>   // ESP32
-// #include <DallasTemperature.h>  // ESP32
-// #include <OneWireNg_DS18B20.h>  // plus large
-// #include <OneWireNg_CurrentPlatform.h>  // plus large
 
-#include <DHT.h>
-#include <PID_v1.h>
-#include <WiFi.h>
-#include <esp_now.h>
-#include <esp_wifi.h>
+//#define ESP_CHAUDIERE      // Rôle principal : gestion de la chaudière
+#define ESP_THERMOMETRE  // Rôle distant : sonde de température
 
-#include "esp_pm.h"
+// Hardware
+//#define MODE_WT32  // WT32-Eth01 sinon ESP32-CAM ou DOIT ESP32 Devkit V1
+
+//#define DEBUG  // mode station, pas de websocket, pas de sécurite, emulation valeurs STM32
+//#define ESP32_v1    // DOIT ESP32 DEVKIt V1
+
+#ifdef ESP_THERMOMETRE
+  //#define ESP32_Fire2
+  #define ESP32_uPesy
+  //#define Temp_int_HDC1080  // Capteur I2C HDC1080
+  #define MODE_Wifi  // Wifi sinon Ethernet
+  //#define Sans_securite
+  #define Sans_websocket
+#endif
+
+#ifdef ESP_CHAUDIERE  // Chaudiere
+  #define ESP32_uPesy
+  //#define ESP32_Fire2
+  #define MODE_Wifi  // Wifi sinon Ethernet
+  #define Sans_websocket
+  //#define Sans_securite
+  //#define WatchDog
+#endif
+
+
+//#define Temp_int_DHT22
+//#define Temp_int_DS18B20
+
+// Réseau
+//#define NO_RESEAU
+
+//#define Wifi_AP    // AP sinon STA
+
+//#define STM32  //incompatible du modbus, sauf à changer les pin
+// #define OTA
 
 #define LATITUDE "48.8461"  // Garches => pour récupération Temp Ext
 #define LONGITUDE "2.1889"
@@ -81,13 +100,13 @@ const int PIN_PAC = 4;     //  OUT PAC - PWM  40kOhm+100nF(Fc=40Hz) et PWM=40khz
 
 // Pin Reveil
 #ifdef ESP32_v1
-#define PIN_REVEIL 12  // Pin de réveil (Bouton externe)
+  #define PIN_REVEIL 12  // Pin de réveil (Bouton externe)
 #endif
 #ifdef ESP32_Fire2    // Firebeetle
-#define PIN_REVEIL 4  // Pin de réveil (Bouton externe) PIN RTC : 0 à 7
+  #define PIN_REVEIL 4  // Pin de réveil (Bouton externe) PIN RTC : 0 à 7
 #endif
 #ifdef ESP32_uPesy
-#define PIN_REVEIL 12  // Pin de réveil (Bouton externe)
+  #define PIN_REVEIL 34  // Pin de réveil (Bouton externe)
 #endif
 
 // Structure d'un message uart
@@ -113,11 +132,6 @@ uint8_t requete_Get_appli(const char* var, float* valeur);
 uint8_t requete_Set_appli(String param, float valf);
 uint8_t requete_GetReg(int reg, float* valeur);
 
-#if defined(ARDUINO_ARCH_ESP32) && defined(WIFI_TX_INFO_T)
-void OnDataSent(const wifi_tx_info_t* info, esp_now_send_status_t status);
-#else
-void OnDataSent(const uint8_t* mac_addr, esp_now_send_status_t status);
-#endif
 
 void passage_deep_sleep(uint64_t temps);
 
@@ -125,7 +139,7 @@ extern float Vbatt_Th;   // Tension batterie thermomètre
 extern bool Vbatt_Th_I;  // indicateur de réception batt sonde
 
 // ESP32-C6 : pins restant à 0 au reset et au boot : 2, 3, 4, 6, 7, 14
-const int PIN_Chaudiere = 3;
+const int PIN_Chaudiere = 2;
 const int PIN_Text = 36;  //  Text:Entrée analogique 32 à 36 et 39
 #ifdef ESP32_v1
 const int PIN_RXModbus = 16;  // s3:18  devkitv1:16 RO
@@ -220,7 +234,6 @@ constexpr int NB_Graphique =
 constexpr int NB_Val_Graph = 99;
 
 extern uint8_t protocole;
-extern WiFiClient client;
 extern QueueHandle_t eventQueue;  // File d'attente des événements sequenceur
 extern uint16_t erreur_queue;
 extern TimerHandle_t debounceTimer;
@@ -250,6 +263,9 @@ extern RTC_DATA_ATTR uint16_t
     cpt_cycle_batt;                   // Compteur cycles pour mesure batterie
 extern volatile uint8_t ackReceived;  // global pour indiquer que le peer a acké
 extern volatile int ackChannel;       // canal où ça a marché
+extern uint8_t mode_reseau;
+extern uint8_t init_time;
+extern float heure;
 
 extern uint8_t activ_cycle;
 extern int16_t cycle_chaud;
@@ -282,8 +298,9 @@ extern char mdp_routeur[];
 extern int16_t graphique[NB_Val_Graph][NB_Graphique];
 extern uint16_t Seuil_batt_sonde;  // millivolt
 extern uint8_t Cons_eco;
+extern TimerHandle_t xTimer_cycle_chaud;
+extern uint8_t compteur_graph;
 
-extern Preferences preferences_nvs;  // Déclaration externe
 extern RTC_DATA_ATTR uint8_t etat_now;
 extern uint8_t Nb_jours_Batt_log;
 

@@ -2,8 +2,10 @@
 
 TODO : 
 
-A compiler pour une firebeetle esp32-C6
+A compiler pour une firebeetle esp32-C6 ou uPesy vroom
+Avantages Platformio : Ifdef, intellisense, temps compil, backtrace
 
+v1.11 03/2026 Bug Text, getlocaltime timeout, pin port série, pullup rtc_gpio_Veille
 v1.10 03/2026 transfert Platformio
 v1.9 03/2026 heure d'été, marche/arret depuis, 
 v1.8 02/2026 PPE prochaine periode, rechargement consigne apres annul forcage,
@@ -39,43 +41,7 @@ Configuration des options de programmation :
 - partition : custom (pour permettre code>1,5MOctets)
 */
 
-//#define ESP_CHAUDIERE      // Rôle principal : gestion de la chaudière
-#define ESP_THERMOMETRE  // Rôle distant : sonde de température
 
-// Hardware
-//#define MODE_WT32  // WT32-Eth01 sinon ESP32-CAM ou DOIT ESP32 Devkit V1
-
-//#define DEBUG  // mode station, pas de websocket, pas de sécurite, emulation valeurs STM32
-//#define ESP32_v1    // DOIT ESP32 DEVKIt V1
-
-#ifdef ESP_THERMOMETRE
-  //#define ESP32_Fire2
-  #define ESP32_uPesy
-  #define Temp_int_HDC1080  // Capteur I2C HDC1080
-  #define MODE_Wifi  // Wifi sinon Ethernet
-  //#define Sans_securite
-  #define Sans_websocket
-#endif
-
-#ifdef ESP_CHAUDIERE  // Chaudiere
-  #define ESP32_Fire2
-  #define MODE_Wifi  // Wifi sinon Ethernet
-  #define Sans_websocket
-  //#define Sans_securite
-  #define WatchDog
-#endif
-
-
-//#define Temp_int_DHT22
-//#define Temp_int_DS18B20
-
-// Réseau
-//#define NO_RESEAU
-
-//#define Wifi_AP    // AP sinon STA
-
-//#define STM32  //incompatible du modbus, sauf à changer les pin
-// #define OTA
 
 
 #define DELAI_PING  180  // en secondes, pour le websocket
@@ -93,11 +59,31 @@ Configuration des options de programmation :
 
 static bool eth_connected = false;
 
+#include <Arduino.h>
+#include <ctype.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
 #include "variables.h"
 
-#include <ctype.h>
+#include <ArduinoJson.h>
+#include <HTTPClient.h>
+#include <Preferences.h>  // pour nvs eeprom
 
-#include <Preferences.h>    // pour utilisation NVS Eeprom
+// #include <OneWire.h>   // ESP32
+// #include <DallasTemperature.h>  // ESP32
+// #include <OneWireNg_DS18B20.h>  // plus large
+// #include <OneWireNg_CurrentPlatform.h>  // plus large
+
+#include <DHT.h>
+#include <PID_v1.h>
+#include <WiFi.h>
+#include <esp_now.h>
+#include <esp_wifi.h>
+
+#include "esp_pm.h"
+
 
 //#include <ESP32Time.h>
 #include "site_web.h"
@@ -106,6 +92,7 @@ static bool eth_connected = false;
 //#include <ArduinoOTA.h>  // nécessaire pour OTA
 #include <Wire.h>
 #include "ClosedCube_HDC1080.h"
+#include "driver/rtc_io.h"
 
 
 #ifdef __cplusplus
@@ -1062,8 +1049,8 @@ void setup()
   Serial.begin(115200);
   
   // Cause réveil du deep/light_sleep (undefined si pas de reveil deep/light sleep)
-  esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
-  if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT0
+  esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause(); // 2:ext0 7:GPIO 4:Timer
+  if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT0 
     || wakeup_reason == ESP_SLEEP_WAKEUP_GPIO) {
     force_stay_awake = true; // Réveil par bouton : on reste éveillé pour l'UART
     wake_up_time = millis();
@@ -1143,7 +1130,7 @@ void setup()
   #endif
 
 
-  Serial.printf("**** Initialisation - reset: %s sleep:%i rtc:%i\n\r",resetREASON0, wakeup_reason, rtc_valid );
+  Serial.printf("**** Initialisation - reset: %s  Sleep:%i rtc:%i\n\r",resetREASON0, wakeup_reason, rtc_valid );
 
   setup_0();   //  --- valeur initiales des graphiques
 
@@ -1501,7 +1488,7 @@ void setup()
     if ((mode_reseau==11) || (mode_reseau==12)) // mode Access Point
     {
       WiFi.mode(WIFI_AP_STA);
-      Serial.printf("lancement mode access point:%i\n\r", mode_reseau);
+      Serial.printf("lancement mode access point:%i au 192.168.254.1\n\r", mode_reseau);
       WiFi.softAP(ssid_AP, password_AP);
       WiFi.softAPConfig(local_ip_AP, gateway_AP, subnet_AP);
       Serial.println(" Starting AP Wifi Web server " + String(ARDUINO_BOARD));
@@ -1668,7 +1655,7 @@ void heartBeatPrint()
 
 //************ lecture de l'heure sur ESP32 ************************************
 void lectureHeure() {
-  if (!getLocalTime(&timeinfo)) {
+  if (!getLocalTime(&timeinfo,2000)) {
     Serial.println("erreur lecture date_heure");
     return; // ou gestion d'erreur
   }
@@ -1788,7 +1775,8 @@ void log_erreur(uint8_t code, uint8_t valeur, uint8_t val2)  // Code:1:Tint, 2:T
   erreur_code[0] = code;
   erreur_valeur[0] = valeur;
   erreur_val2[0] = val2;
-  getLocalTime(&timeinfo);
+  getLocalTime(&timeinfo, 400);
+  delay(50);
   erreur_jour[0] = timeinfo.tm_mday;
   erreur_heure[0] = timeinfo.tm_hour;
   erreur_minute[0] = timeinfo.tm_min;
@@ -2120,7 +2108,7 @@ uint8_t requete_Set(uint8_t type, const char* param, const char* valStr)
     if (cpt_securite) {
       if (strcmp(param, "minute_m") == 0) {
         //Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
-        getLocalTime(&timeinfo);
+        getLocalTime(&timeinfo,400);
         //Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
         timeinfo.tm_min = val;
         //Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
@@ -2130,20 +2118,20 @@ uint8_t requete_Set(uint8_t type, const char* param, const char* valStr)
         tv.tv_sec = sec;
         tv.tv_usec = 0;
         settimeofday(&tv, NULL);
-        getLocalTime(&timeinfo);
+        getLocalTime(&timeinfo,400);
         Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
         res = 0;
       }
 
       else if (strcmp(param, "heure_m") == 0) {
-        getLocalTime(&timeinfo);
+        getLocalTime(&timeinfo,400);
         timeinfo.tm_hour = val - 1;
         const time_t sec = mktime(&timeinfo);  // make time_t
         timeval tv;
         tv.tv_sec = sec;
         tv.tv_usec = 0;
         settimeofday(&tv, NULL);
-        getLocalTime(&timeinfo);
+        getLocalTime(&timeinfo,400);
         Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
         res = 0;
       }
@@ -2747,6 +2735,7 @@ void systeme_activ(uint8_t ordre) {
 // type=0:tout  type=1:maj uniquement (sans tableaux)
 void requete_status(char *json_response, uint8_t socket, uint8_t type)
 {
+
   // Vérification de sécurité du pointeur
   if (json_response == nullptr) {
     Serial.println("ERREUR: json_response est NULL");
@@ -2757,9 +2746,11 @@ void requete_status(char *json_response, uint8_t socket, uint8_t type)
   static bool lecture_en_cours = false;
   static unsigned long derniere_lecture = 0;
   
+  unsigned long mill = millis();
+
   #ifdef ESP_THERMOMETRE
     // Attendre au moins 2 secondes
-    if (millis() - derniere_lecture < DHT22_MIN_INTERVAL_MS) {
+    if (mill - derniere_lecture < DHT22_MIN_INTERVAL_MS) {
       // Utiliser la dernière valeur lue si trop fréquent
       // Tint reste inchangée
     } else {
@@ -2767,7 +2758,7 @@ void requete_status(char *json_response, uint8_t socket, uint8_t type)
       if (!lecture_en_cours)
       {
         lecture_en_cours = true;
-        derniere_lecture = millis();
+        derniere_lecture = mill;
         
         uint8_t Tint_erreur=0;
         Tint_erreur = lecture_Tint(&Tint);
@@ -2786,13 +2777,13 @@ void requete_status(char *json_response, uint8_t socket, uint8_t type)
   //Text_erreur = lecture_Text(&Text);
   //if (Text_erreur) Text = 15;
 
-  unsigned long mill = millis();
 
   unsigned long sec = mill / 1000;  // 65000
   int min = (sec / 60) % 60;  //
   int hour = (sec / 3600) % 24;
   int day = (sec / 3600 / 24);
   snprintf(St_Uptime, 30, "%d jours %d heures %d min", day, hour, min);
+
 
   TickType_t now = xTaskGetTickCount();
   TickType_t expir = xTimerGetExpiryTime(xTimer_Cycle);
@@ -2947,6 +2938,7 @@ void requete_status(char *json_response, uint8_t socket, uint8_t type)
   p--;
   *p++ = '}';
   *p++ = 0;
+
 }
 
 void printMemoryStatus()
@@ -3361,7 +3353,7 @@ void writeLog(uint8_t code, uint8_t c1, uint8_t c2, uint8_t c3, const char* mess
     }
 
     LogEntry log = {0};  // initialise toute la structure à 0, y compris message
-    getLocalTime(&timeinfo);
+    getLocalTime(&timeinfo,100);
     time_t timestamp = mktime(&timeinfo);   // Convertit struct tm en timestamp
     log.timestamp = static_cast<uint32_t>(timestamp);  // cast explicite sur 4 octets
     //log.timestamp = millis();  // ou un timestamp réel si tu as l'heure
@@ -3597,6 +3589,7 @@ void passage_deep_sleep(uint64_t temps)
     esp_sleep_enable_ext0_wakeup((gpio_num_t)PIN_REVEIL, 0); // Réveil par bouton (0 = bas)
   #endif
   #ifdef ESP32_uPesy
+    rtc_gpio_pullup_en((gpio_num_t)PIN_REVEIL);  // pull-up actif en deep sleep
     esp_sleep_enable_ext0_wakeup((gpio_num_t)PIN_REVEIL, 0); // Réveil par bouton (0 = bas)
   #endif
   #ifdef ESP32_Fire2  // Firebeetle

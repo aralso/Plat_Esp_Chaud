@@ -1,7 +1,34 @@
 
-#include "variables.h"
+#include <Arduino.h>
+#include <ctype.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 
-void OnDataRecv(const esp_now_peer_info_t * info, const uint8_t *incomingData, int len);
+#include "variables.h"
+#include <WiFi.h>
+#include <esp_wifi.h>
+#include <esp_now.h>
+#include <Preferences.h>  // pour nvs eeprom
+#include <PID_v1.h>
+#include <DHT.h>
+#include <ArduinoJson.h>
+#include <HTTPClient.h>
+
+extern WiFiClient client;
+extern Preferences preferences_nvs;  // Déclaration externe
+
+//void OnDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len);
+void OnDataRecv(const uint8_t *mac, const uint8_t *data, int len);
+//void OnDataRecv(const esp_now_peer_info_t * info, const uint8_t *incomingData, int len);
+
+#if defined(ARDUINO_ARCH_ESP32) && defined(WIFI_TX_INFO_T)
+void OnDataSent(const wifi_tx_info_t* info, esp_now_send_status_t status);
+#else
+void OnDataSent(const uint8_t* mac_addr, esp_now_send_status_t status);
+#endif
+
+uint8_t parseMacString(const char* str, uint8_t mac[6]);
 
 // Variables pour le PID
 double Consigne, Input, Output;
@@ -558,15 +585,15 @@ void setup_1()
  
     #ifdef Temp_int_HDC1080
 
-    #ifdef ESP32_v1
-      Wire.begin(21, 22); // Forçage des pins SDA=21, SCL=22 pour ESP32 DevKit V1
-    #endif
-    #ifdef ESP32_Fire2
-      Wire.begin(19, 20); // Forçage des pins SDA=20, SCL=21 pour ESP32 Firebeetle 2
-    #endif
-    #ifdef ESP32_uPesy
-      Wire.begin(21, 22); // Forçage des pins SDA=21, SCL=22 pour ESP32 uPesy
-    #endif
+      #ifdef ESP32_v1
+        Wire.begin(21, 22); // Forçage des pins SDA=21, SCL=22 pour ESP32 DevKit V1
+      #endif
+      #ifdef ESP32_Fire2
+        Wire.begin(19, 20); // Forçage des pins SDA=20, SCL=21 pour ESP32 Firebeetle 2
+      #endif
+      #ifdef ESP32_uPesy
+        Wire.begin(21, 22); // Forçage des pins SDA=21, SCL=22 pour ESP32 uPesy
+      #endif
 
       hdc1080.begin(0x40);
       /*if (i2cDevicePresent(0x40)) {
@@ -1685,13 +1712,13 @@ uint8_t fetch_internet_temp() {
       DeserializationError error = deserializeJson(doc, payload);
       
       if (!error) {
-        float temp = doc["current"]["temperature_2m"];
-        if (temp > -50.0 && temp < 60.0)
+        float temp = doc["current"]["temperature_2m"] | NAN;
+        if (!isnan(temp) && temp > -50.0 && temp < 60.0)
         {
           res = 0;
           Text = temp;
           //Serial.printf("Météo Garches : %.1f°C\n", Text);
-          uint8_t mil = millis();
+          uint32_t mil = millis();
           if (mil - last_remote_Text_time > 35*60*1000) // le precedent message est vieux de plus de 35 minutes
             err_Text++;
           last_remote_Text_time = mil;
@@ -1784,12 +1811,18 @@ float readBatteryVoltage() {
 
 #ifdef ESP_CHAUDIERE
 // Callback reception ESP-NOW
-void OnDataRecv(const esp_now_peer_info_t * info, const uint8_t *incomingData, int len) {
+void OnDataRecv(const uint8_t *mac, const uint8_t *incomingData, int len) {
+//void OnDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
+//void OnDataRecv(const esp_now_peer_info_t * info, const uint8_t *incomingData, int len) {
   // 🔍 DIAGNOSTIC: Afficher infos de réception
   Serial.println("\n📥 ========== RECEPTION ESP-NOW ==========");
-  Serial.printf("   Source MAC: %02X:%02X:%02X:%02X:%02X:%02X\n",
+  for (int i = 0; i < 6; i++) {
+        Serial.printf("%02X", mac[i]);
+        if (i < 5) Serial.print(":");
+    }
+  /*Serial.printf("   Source MAC: %02X:%02X:%02X:%02X:%02X:%02X\n",
                 info->src_addr[0], info->src_addr[1], info->src_addr[2],
-                info->src_addr[3], info->src_addr[4], info->src_addr[5]);
+                info->src_addr[3], info->src_addr[4], info->src_addr[5]);*/
   
   // Afficher le canal WiFi actuel
   uint8_t current_channel;
