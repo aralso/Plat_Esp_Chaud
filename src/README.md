@@ -1,4 +1,4 @@
-# Ard_ESP_Chaudiere_Garches :
+# Ard_ESP_Server_Garches :
 
 Modification adresse IP : Message type 2 ou 4 (à envoyer sur port série 115200 bauds)
 2-1:13              // 13 : mode wifi station

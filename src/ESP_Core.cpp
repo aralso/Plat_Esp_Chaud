@@ -5,9 +5,25 @@ TODO :
 A compiler pour une firebeetle esp32-C6 ou uPesy vroom
 Avantages Platformio : Ifdef, intellisense, temps compil, backtrace
 
+<<<<<<< HEAD:src/ESP_Core.cpp
 v1.3 05/2026 board upesy, humidite absolue, envoi vers serveur
 v1.2 03/2026 Surveillance batterie, log 24h en eeprom, OTA à la demande
 v1.1 03/2026 copie de plat_esp_chad_gar v1.11 de 3/2026
+=======
+v1.11 03/2026 Bug Text, getlocaltime timeout, pin port série, pullup rtc_gpio_Veille
+v1.10 03/2026 transfert Platformio
+v1.9 03/2026 heure d'été, marche/arret depuis, 
+v1.8 02/2026 PPE prochaine periode, rechargement consigne apres annul forcage,
+             graphique cout,slide maj, log24h, vbatt, bug programme, icone flamme
+             pin 3 (ok boot), bug init cpt_cycle_batt, bug vacances
+v1.7 02/2026 qq bugs, optimisation taille site_web, consigne vacances
+v1.6 02/2026 Firebeetle, sonde(mode dégradés), Chaud(Batt_sonde_low, freq log batt)
+v1.5 02/2026 esp_sonde et eps_chaudiere ok
+v1.4 02/2026 esp_now
+v1.3 02/2026 OTA, ajout esp32_thermometre, mesure Text par internet
+v1.2 12/2025 1ere version ops, modif site web, compil ok
+v1.1 12/2025 copie de PAC_Catalane v1.16
+>>>>>>> 9a87e3d8980893dde2978d55b45a3be30a751430:src/Ard_ESP_Chaud_Gar.cpp
 
 Graphique 1 : par cycle : G1:temp_int(vert) G2:temp ext(bleu) G3:Nbdetect par cycle
 Graphique 2 : par 24h :   G1:Temp int(vert) G2:temp_ext(bleu) G3:Nb detect/24h
@@ -1116,6 +1132,7 @@ void setup()
   Serial.begin(115200);
   
   // Cause réveil du deep/light_sleep (undefined si pas de reveil deep/light sleep)
+<<<<<<< HEAD:src/ESP_Core.cpp
   esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause(); // 2:ext0(1pin) 3:Ext1(2pins) 7:GPIO 4:Timer
   uint8_t reveil=0;
 
@@ -1157,6 +1174,14 @@ void setup()
   {
       force_stay_awake = true; // Réveil par Cold reset : on reste eveillé 50 secondes
       wake_up_time = millis() + 50000;
+=======
+  esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause(); // 2:ext0 7:GPIO 4:Timer
+  if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT0 
+    || wakeup_reason == ESP_SLEEP_WAKEUP_GPIO) {
+    force_stay_awake = true; // Réveil par bouton : on reste éveillé pour l'UART
+    wake_up_time = millis();
+    Serial.println("\n*** RÉVEIL PAR BOUTON : Mode configuration UART actif pour 30s ***");
+>>>>>>> 9a87e3d8980893dde2978d55b45a3be30a751430:src/Ard_ESP_Chaud_Gar.cpp
   }
 
   strncpy(resetREASON0, verbose_reset_reason(resetReason0), sizeof(resetREASON0) - 1);
@@ -1255,7 +1280,12 @@ void setup()
   #endif
 
 
+<<<<<<< HEAD:src/ESP_Core.cpp
   Serial.printf("**** Initialisation - reset: %s  type_rev:%i Sleep:%i rtc:%i\n\r",resetREASON0, type_reveil, wakeup_reason, rtc_valid );
+=======
+  Serial.printf("**** Initialisation - reset: %s  Sleep:%i rtc:%i\n\r",resetREASON0, wakeup_reason, rtc_valid );
+
+>>>>>>> 9a87e3d8980893dde2978d55b45a3be30a751430:src/Ard_ESP_Chaud_Gar.cpp
   setup_0();   //  --- valeur initiales des graphiques
 
   if (type_reveil>=4) // bouton ou toujours actif
@@ -3093,9 +3123,12 @@ float absoluteHumidity(float T, float RH)
 void requete_status(char *json_response, uint8_t socket, uint32_t type)
 {
 
+<<<<<<< HEAD:src/ESP_Core.cpp
   force_stay_awake = true;
   wake_up_time = millis() + 60000;  // prolonger si demande page web
 
+=======
+>>>>>>> 9a87e3d8980893dde2978d55b45a3be30a751430:src/Ard_ESP_Chaud_Gar.cpp
   // Vérification de sécurité du pointeur
   if (json_response == nullptr) {
     Serial.println("ERREUR: json_response est NULL");
@@ -3108,9 +3141,15 @@ void requete_status(char *json_response, uint8_t socket, uint32_t type)
   
   unsigned long mill = millis();
 
+<<<<<<< HEAD:src/ESP_Core.cpp
   #ifdef ESP_VEILLE
     // Attendre au moins 2 secondes
    /* if (mill - derniere_lecture < DHT22_MIN_INTERVAL_MS) {
+=======
+  #ifdef ESP_THERMOMETRE
+    // Attendre au moins 2 secondes
+    if (mill - derniere_lecture < DHT22_MIN_INTERVAL_MS) {
+>>>>>>> 9a87e3d8980893dde2978d55b45a3be30a751430:src/Ard_ESP_Chaud_Gar.cpp
       // Utiliser la dernière valeur lue si trop fréquent
       // Tint reste inchangée
     } else {
@@ -4131,6 +4170,7 @@ void passage_deep_sleep(uint64_t temps)
     esp_sleep_enable_ext0_wakeup((gpio_num_t)PIN_REVEIL, 0); // Réveil par bouton (0 = bas)
   #endif
   #ifdef ESP32_uPesy
+<<<<<<< HEAD:src/ESP_Core.cpp
     //rtc_gpio_pullup_en((gpio_num_t)(PIN_REVEIL));  // pull-up actif en deep sleep : GPIO4=RTC10
     //esp_sleep_enable_ext0_wakeup((gpio_num_t)PIN_REVEIL, 0); // Réveil par bouton (0 = bas)
     //rtc_gpio_pulldown_en((gpio_num_t)(PIN_REVEIL));  // pull-up actif en deep sleep : GPIO12=RTC14
@@ -4155,6 +4195,10 @@ void passage_deep_sleep(uint64_t temps)
       esp_sleep_enable_ext1_wakeup(config.pin_bit_mask, ESP_EXT1_WAKEUP_ANY_HIGH);
 
       Serial.println("Going to sleep...");
+=======
+    rtc_gpio_pullup_en((gpio_num_t)PIN_REVEIL);  // pull-up actif en deep sleep
+    esp_sleep_enable_ext0_wakeup((gpio_num_t)PIN_REVEIL, 0); // Réveil par bouton (0 = bas)
+>>>>>>> 9a87e3d8980893dde2978d55b45a3be30a751430:src/Ard_ESP_Chaud_Gar.cpp
   #endif
 
   #ifdef ESP32_S3   // S3
