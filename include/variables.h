@@ -2,29 +2,55 @@
 
 #define VARIABLES_H
 
-#include <Arduino.h>
-#include <ctype.h>
-#include <stdbool.h>
-#include <stddef.h>
-#include <stdint.h>
 
 // variables externes
-#include <ArduinoJson.h>
-#include <HTTPClient.h>
-#include <Preferences.h>  // Inclure la librairie nécessaire
 
-// #include <OneWire.h>   // ESP32
-// #include <DallasTemperature.h>  // ESP32
-// #include <OneWireNg_DS18B20.h>  // plus large
-// #include <OneWireNg_CurrentPlatform.h>  // plus large
+#define NB_CAPT 3  // 3 capteurs remote
 
-#include <DHT.h>
-#include <PID_v1.h>
-#include <WiFi.h>
-#include <esp_now.h>
-#include <esp_wifi.h>
+#define ESP_TJ_ACTIF     // Rôle principal 
 
-#include "esp_pm.h"
+
+// Hardware
+//#define MODE_WT32  // WT32-Eth01 sinon ESP32-CAM ou DOIT ESP32 Devkit V1
+
+//#define DEBUG  // mode station, pas de websocket, pas de sécurite, emulation valeurs STM32
+//#define ESP32_v1    // DOIT ESP32 DEVKIt V1
+
+#ifdef ESP_VEILLE
+  //#define ESP32_Fire2
+  #define ESP32_uPesy
+  //#define Temp_int_HDC1080  // Capteur I2C HDC1080
+  #define MODE_Wifi  // Wifi sinon Ethernet
+  //#define Sans_securite
+  #define Sans_websocket
+  #define OTA
+  #define ENVOI
+  #define STOCKAGE
+
+#endif
+
+#ifdef ESP_TJ_ACTIF  // Serveur
+  #define ESP32_S3
+  #define OTA
+
+  //#define ESP32_Fire2
+  #define MODE_Wifi  // Wifi sinon Ethernet
+  //#define Sans_websocket
+  //#define Sans_securite
+  //#define WatchDog
+#endif
+
+
+//#define Temp_int_DHT22
+//#define Temp_int_DS18B20
+
+// Réseau
+//#define NO_RESEAU
+
+//#define Wifi_AP    // AP sinon STA
+
+//#define STM32  //incompatible du modbus, sauf à changer les pin
+// #define OTA
 
 #define LATITUDE "48.8461"  // Garches => pour récupération Temp Ext
 #define LONGITUDE "2.1889"
@@ -34,12 +60,23 @@
 // "garches" Pour le trouver : regardez les logs de la chaudière au démarrage
 
 // Adresse par défaut de la chaudière (B0:CB:D8:E9:0C:74)
-const uint8_t MAC_CHAUDIERE[] = {0xB0, 0xCB, 0xD8, 0xE9, 0x0C, 0x74};
+const uint8_t MAC_SERVEUR[] = {0xB0, 0xCB, 0xD8, 0xE9, 0x0C, 0x74};
 
-typedef struct {
-  uint8_t type;  // 1: Temperature, 2: Batterie
-  float value;
+
+#define MAX_PAYLOAD 200
+#define MAX_TEMP 30   // taille max autorisée pour l'envoi des temp/humid
+#define SERVER_ADD 'H'
+
+typedef struct __attribute__((packed)) {   // packed permet d'éviter les octets de padding ajoutés par le compilateur
+    uint8_t destinataire;
+    uint8_t emetteur;
+    uint8_t longueur;
+    uint8_t code;
+    uint8_t code2;
+    uint8_t payload[MAX_PAYLOAD];
 } Message_EspNow;
+
+
 
 //  -------  CONFIGURATION DES PINS
 //  -----------------------------------------------
@@ -69,25 +106,41 @@ typedef struct {
 #define BNT5 16  // Reset pour Accesspoint*/
 
 #ifdef MODE_WT32  // WT32_Eth01
-// const int PIN_Tint = 11;   // GPIO IN1 Temp interieure DS18B20
-const int PIN_Tint22 = 5;  // GPIO IN1 Temp interieure DHT22
-const int PIN_PAC = 4;     // GPIO OUT PAC PWM
-const int PIN_Text = 36;   //  Text:Entrée analogique 32 à 36 et 39
+  // const int PIN_Tint = 11;   // GPIO IN1 Temp interieure DS18B20
+  const int PIN_Tint22 = 5;  // GPIO IN1 Temp interieure DHT22
+  const int PIN_PAC = 4;     // GPIO OUT PAC PWM
+  const int PIN_Text = 36;   //  Text:Entrée analogique 32 à 36 et 39
 #else                      // ESP32_DevKit
-// const int PIN_Tint = 13;  Défini dans le fichier appli.ino
-const int PIN_Tint22 = 5;  // GPIO IN1 Temp interieure DHT22
-const int PIN_PAC = 4;     //  OUT PAC - PWM  40kOhm+100nF(Fc=40Hz) et PWM=40khz
-#define PIN_Vbatt 0        // Pin Surveillance Batterie (LiPo/2)
+  // const int PIN_Tint = 13;  Défini dans le fichier appli.ino
+  const int PIN_Tint22 = 5;  // GPIO IN1 Temp interieure DHT22
+  const int PIN_PAC = 4;     //  OUT PAC - PWM  40kOhm+100nF(Fc=40Hz) et PWM=40khz
+#endif
 
 // Pin Reveil
 #ifdef ESP32_v1
-#define PIN_REVEIL 12  // Pin de réveil (Bouton externe)
+  #define PIN_REVEIL 12  // Pin de réveil (Bouton externe)
 #endif
+
+#ifdef ESP32_S3
+  #define PIN_REVEIL 12  // Pin de réveil (Bouton externe)
+  #define PIN_Vbatt 10        // Pin Surveillance Batterie (LiPo/2)
+  #define PIN_REVEIL2 11  // Pin d'entrée pour interruption (ex: detecteur)
+  #define PIN_OUT0 4     // Power pour alimenter le capteur PIR : 10uA
+  #define PIN_SDA 8
+  #define PIN_SCL 9
+  const int PIN_RXModbus = 16;  // s3:18  devkitv1:16 RO
+  const int PIN_TXModbus = 17;  // s3:17  devkitv1:17 DI
+  #define MAX485_RE_NEG 35  // S3:35
+  #define MAX485_DE 36      // s3:36
+  const int PIN_RXSTM = 18;  // RX STM32
+  const int PIN_TXSTM = 17;  // TX STM32
+#endif
+
 #ifdef ESP32_Fire2    // Firebeetle
-#define PIN_REVEIL 4  // Pin de réveil (Bouton externe) PIN RTC : 0 à 7
+  #define PIN_REVEIL 4  // Pin de réveil (Bouton externe) PIN RTC : 0 à 7
 #endif
 #ifdef ESP32_uPesy
-#define PIN_REVEIL 12  // Pin de réveil (Bouton externe)
+  #define PIN_REVEIL 34  // Pin de réveil (Bouton externe)
 #endif
 
 // Structure d'un message uart
@@ -98,13 +151,20 @@ typedef struct {
 } UartMessage;
 
 typedef struct {
+  uint8_t Add_node;
+  uint16_t nb_mess_recu;
+  uint8_t actif;
+  uint8_t mac_node[6];
+} S_Node;
+
+typedef struct {
   uint16_t longueur;  // longueur
   char msg[MSG_SIZE];
 } UartMessage_t;
 
 float readBatteryVoltage();
 void lectureHeure();
-void requete_status(char* json_response, uint8_t socket, uint8_t type);
+void requete_status(char* json_response, uint8_t socket, uint32_t type);
 void recep_message1(UartMessage_t* messa);  // recept_uart1
 void maj_etat_chaudiere_delai(uint8_t delai);
 void modif_timer_cycle(void);
@@ -112,55 +172,22 @@ void traitement_rx(UartMessage_t* mess);
 uint8_t requete_Get_appli(const char* var, float* valeur);
 uint8_t requete_Set_appli(String param, float valf);
 uint8_t requete_GetReg(int reg, float* valeur);
+void     setup_nvs_rtc();
+void enreg_24h( uint8_t veille);
 
-#if defined(ARDUINO_ARCH_ESP32) && defined(WIFI_TX_INFO_T)
-void OnDataSent(const wifi_tx_info_t* info, esp_now_send_status_t status);
-#else
-void OnDataSent(const uint8_t* mac_addr, esp_now_send_status_t status);
-#endif
+template<typename T>
+void payloadWrite(uint8_t* payload, uint8_t& pos, const T& value)
+{
+    memcpy(&payload[pos], &value, sizeof(T));
+    pos += sizeof(T);
+}
 
 void passage_deep_sleep(uint64_t temps);
 
 extern float Vbatt_Th;   // Tension batterie thermomètre
 extern bool Vbatt_Th_I;  // indicateur de réception batt sonde
 
-// ESP32-C6 : pins restant à 0 au reset et au boot : 2, 3, 4, 6, 7, 14
-const int PIN_Chaudiere = 3;
-const int PIN_Text = 36;  //  Text:Entrée analogique 32 à 36 et 39
-#ifdef ESP32_v1
-const int PIN_RXModbus = 16;  // s3:18  devkitv1:16 RO
-const int PIN_TXModbus = 17;  // s3:17  devkitv1:17 DI
-#endif
-#ifdef ESP32_Fire2
-const int PIN_RXModbus = 18;  // s3:18  devkitv1:16 RO
-const int PIN_TXModbus = 17;  // s3:17  devkitv1:17 DI
-#endif
-#ifdef ESP32_uPesy
-const int PIN_RXModbus = 16;  // s3:18  devkitv1:16 RO
-const int PIN_TXModbus = 17;  // s3:17  devkitv1:17 DI
-#endif
-const int PIN_on = 19;  // allumage et extinction d'un système avec 2 boutons
-const int PIN_off = 19;
-// const int PIN_RE = 32;
-// const int PIN_DE = 33;
-const int PIN_RXSTM = 18;  // RX STM32
-const int PIN_TXSTM = 17;  // TX STM32
-#endif
-// #define sorties analogique : 25 ou 26 (avec Dacwrite)
 
-// Modbus
-#ifdef ESP32_v1
-#define MAX485_RE_NEG 32  // S3:35  devkitv1:32
-#define MAX485_DE 33      // s3:36  devkitv1:33
-#endif
-#ifdef ESP32_Fire2
-#define MAX485_RE_NEG 35  // S3:35
-#define MAX485_DE 36      // s3:36
-#endif
-#ifdef ESP32_uPesy
-#define MAX485_RE_NEG 32  // S3:35  devkitv1:32
-#define MAX485_DE 33      // s3:36  devkitv1:33
-#endif
 
 /* ESP32S3 : Serial0:Pin 42 et 43
  */
@@ -174,14 +201,11 @@ typedef enum {
   EVENT_GPIO_OFF,
   EVENT_ERREUR,
   EVENT_ECOUTE_WebSock,
-  EVENT_CYCLE_Compresseur,
   EVENT_WATCHDOG,
   EVENT_24H,
   EVENT_3min,
   EVENT_CYCLE,
-  EVENT_UART1,
-  EVENT_ACTIV_CHAUD,
-  EVENT_CYCLE_CHAUD
+  EVENT_UART1
 } systeme_eve_type_t;
 
 // Structure d'un événement tache sequenceur
@@ -190,15 +214,6 @@ typedef struct {
   uint32_t data;            // Donnée associée (ex: valeur capteur, byte UART)
 } systeme_eve_t;
 
-// planning
-#define NB_MAX_PGM 3
-typedef struct {
-  uint8_t ch_debut;       // debut de chauffe :heure par pas de 10 minutes
-  uint8_t ch_fin;         // fin de chauffe
-  uint8_t ch_type;        // 0:tous les jours, 1:semaine, 2:week-end (2 bits)
-  uint8_t ch_consigne;    // 5° à 23°C, par pas de 0,1°C
-  uint8_t ch_cons_apres;  // 3° à 23°C, par pas de 0,5°C (6 bits)
-} planning_t;
 
 /* Codes erreur*/
 #define Code_erreur_Tint 1
@@ -213,35 +228,30 @@ typedef struct {
 #define Code_erreur_wifi 9
 #define Code_erreur_esp_now 10
 
-#define DEBOUNCE_INTERVAL 300  // Temps anti-rebond en ms
 
-constexpr int NB_Graphique =
-    6;  // Temp Ext, Temp int, Chaud, MoyText, MoyTint, Cout,
 constexpr int NB_Val_Graph = 99;
 
+#define MAX_DUMP 6900              // 600 + 1050 car par graphique
+extern char buffer_dmp[MAX_DUMP];  // max 250 logs, 16 octets chacun
+
+extern RTC_DATA_ATTR uint8_t esp_now_actif;  // 0:esp_now inactif  1:actif
+
 extern uint8_t protocole;
-extern WiFiClient client;
 extern QueueHandle_t eventQueue;  // File d'attente des événements sequenceur
 extern uint16_t erreur_queue;
 extern TimerHandle_t debounceTimer;
 extern TimerHandle_t xTimer_activ_chaud;
 extern RTC_DATA_ATTR uint8_t periode_cycle;
 extern RTC_DATA_ATTR uint8_t mode_rapide;
-extern float Teau, Tint, Text, loi_eau_Tint, T_obj, T_loi_eau;
+extern float Tint, Text, Humid;
 
-#define MAX_DUMP 6900              // 600 + 1050 car par graphique
-extern char buffer_dmp[MAX_DUMP];  // max 250 logs, 16 octets chacun
 
-extern uint16_t date_ac;
+extern uint16_t compteur_detection;
+extern uint16_t Nb_PI[];
+
+extern float Tint, Text, Humid;
+
 extern uint8_t cpt_securite;
-extern double Consigne, Input, Output;
-extern double Kp, Ki, Kd;
-extern uint16_t Consigne_G, Consigne_HG;
-extern uint8_t HG, Ballon;
-extern uint8_t mode_pid;
-extern const int PIN_Tint;
-extern uint8_t skip_graph;
-extern uint8_t MMCh;
 extern uint8_t WIFI_CHANNEL;
 extern RTC_DATA_ATTR uint8_t
     last_wifi_channel;     // Mémorisation du canal Wifi en DeepSleep
@@ -250,40 +260,32 @@ extern RTC_DATA_ATTR uint16_t
     cpt_cycle_batt;                   // Compteur cycles pour mesure batterie
 extern volatile uint8_t ackReceived;  // global pour indiquer que le peer a acké
 extern volatile int ackChannel;       // canal où ça a marché
+extern uint8_t mode_reseau;
+extern uint8_t init_time;
+extern float heure;
 
-extern uint8_t activ_cycle;
-extern int16_t cycle_chaud;
-extern unsigned long milli_marche, milli_arret;
 
-extern planning_t plan[];
-extern uint16_t fo_jus;  // nb minutes restantes de forcage consigne
-extern uint8_t
-    fo_co;  // consigne de forcage : en dixième de degrés : 0,0° à 25,5°
-extern uint8_t planning;  // booléen 1:plannig 0:non
-extern uint8_t vacances;  // booléen 1:vacances 0:non
-extern uint8_t va_cons;  // consigne pendant les vacances : en dixième de degrés
-                         // : 0,0° à 25,5°
-extern uint16_t
-    va_date;  // date de fin de vacances : en nb de jours depuis 2020
-extern uint8_t va_heure;   // heure de fin de vacances 0h à 24h
-extern uint8_t cons_fixe;  // booléen 1:consigne fixe  0:non
-extern uint8_t co_fi;  // consigne fixe : en dixième de degrés : 0,0° à 25,5°
+extern RTC_DATA_ATTR uint8_t skip_graph;
 
-extern unsigned long last_chaudiere_change;
 extern unsigned long last_remote_Tint_time, last_remote_Text_time,
     last_remote_heure_time;
-extern uint16_t err_Tint, err_Text, err_Heure;
-extern uint8_t chaudiere;
+extern RTC_DATA_ATTR uint16_t err_Tint, err_Text, err_Heure;
 
-extern float tempI_moy24h, tempE_moy24h, cout_moy24h;
-extern uint8_t cpt24_Tint, cpt24_Text, cpt24_Cout;
+extern RTC_DATA_ATTR float tempI_moy24h, tempE_moy24h, Hum_24h, HA_moy24h;
+extern RTC_DATA_ATTR uint8_t cpt24_Tint, cpt24_Text, cpt24_Hum, cpt24_HA;
 
 extern char mdp_routeur[];
-extern int16_t graphique[NB_Val_Graph][NB_Graphique];
+extern int16_t valT[NB_Val_Graph][NB_CAPT][4];
+extern int16_t graphique[NB_Val_Graph][10];
+extern int16_t batt_sonde[NB_CAPT][20];
 extern uint16_t Seuil_batt_sonde;  // millivolt
-extern uint8_t Cons_eco;
+extern uint16_t Seuil_batt_arret_ESP;  // millivolt
+extern uint8_t type_reveil;  //0:pas de reveil 1: réveil par timer, 2: réveil par bouton_reveil 3:reveil par PIR
 
-extern Preferences preferences_nvs;  // Déclaration externe
+extern uint8_t Cons_eco;
+extern TimerHandle_t xTimer_cycle_chaud;
+extern uint8_t compteur_graph;
+
 extern RTC_DATA_ATTR uint8_t etat_now;
 extern uint8_t Nb_jours_Batt_log;
 
@@ -311,11 +313,9 @@ uint8_t requete_GetReg_appli(int reg, float* valeur);
 uint8_t requete_SetReg_appli(int param, float valeurf);
 uint8_t requete_Get_String_appli(uint8_t type, String var, char* valeur);
 uint8_t requete_Set_String_appli(int param, const char* texte);
-uint8_t lecture_Tint(float* mesure);
+uint8_t lecture_Tint(float* mesure, float* humid);
 uint8_t lecture_Text(float* mesure);
-void event_mesure_temp();
-void maj_etat_chaudiere();
-void event_mesure_compresseur();
+void event_cycle();
 
 // Fonctions WiFi
 uint8_t connectWiFiWithDiagnostic();

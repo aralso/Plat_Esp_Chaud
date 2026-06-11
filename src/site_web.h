@@ -7,7 +7,7 @@ const char index_html[] PROGMEM = R"rawliteral(
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="apple-mobile-web-app-capable" content="no">
 <meta name="mobile-web-app-capable" content="no">
-<title>Chaudiere</title>
+<title>Serveur</title>
 <style>
   body {font-family: Arial,Helvetica,sans-serif;background: #181818;color: #EFEFEF;font-size: 16px}
   section.main { display: flex }
@@ -117,7 +117,7 @@ const char index_html[] PROGMEM = R"rawliteral(
 </style>
 </head>
 <body>
-    <h2>Chaudiere</h2>
+    <h2>Serveur</h2>
     <h3></h3>
     <section class="main">
       <div id="logo">
