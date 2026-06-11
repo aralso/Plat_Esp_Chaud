@@ -14,28 +14,10 @@
 #include <DHT.h>
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
-<<<<<<< HEAD
 
 extern WiFiClient client;
 extern Preferences preferences_nvs;  // Déclaration externe
 
-=======
-
-extern WiFiClient client;
-extern Preferences preferences_nvs;  // Déclaration externe
-
-//void OnDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len);
-void OnDataRecv(const uint8_t *mac, const uint8_t *data, int len);
-//void OnDataRecv(const esp_now_peer_info_t * info, const uint8_t *incomingData, int len);
-
-#if defined(ARDUINO_ARCH_ESP32) && defined(WIFI_TX_INFO_T)
-void OnDataSent(const wifi_tx_info_t* info, esp_now_send_status_t status);
-#else
-void OnDataSent(const uint8_t* mac_addr, esp_now_send_status_t status);
-#endif
-
-uint8_t parseMacString(const char* str, uint8_t mac[6]);
->>>>>>> 9a87e3d8980893dde2978d55b45a3be30a751430
 
 uint8_t  WIFI_CHANNEL;
 RTC_DATA_ATTR uint8_t etat_now;
