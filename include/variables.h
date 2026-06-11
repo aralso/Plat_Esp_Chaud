@@ -5,36 +5,24 @@
 
 // variables externes
 
-<<<<<<< HEAD
 #define NB_CAPT 3  // 3 capteurs remote
 
 #define ESP_TJ_ACTIF     // Rôle principal 
 
 
-=======
-
-//#define ESP_CHAUDIERE      // Rôle principal : gestion de la chaudière
-#define ESP_THERMOMETRE  // Rôle distant : sonde de température
-
->>>>>>> 9a87e3d8980893dde2978d55b45a3be30a751430
 // Hardware
 //#define MODE_WT32  // WT32-Eth01 sinon ESP32-CAM ou DOIT ESP32 Devkit V1
 
 //#define DEBUG  // mode station, pas de websocket, pas de sécurite, emulation valeurs STM32
 //#define ESP32_v1    // DOIT ESP32 DEVKIt V1
 
-<<<<<<< HEAD
 #ifdef ESP_VEILLE
-=======
-#ifdef ESP_THERMOMETRE
->>>>>>> 9a87e3d8980893dde2978d55b45a3be30a751430
   //#define ESP32_Fire2
   #define ESP32_uPesy
   //#define Temp_int_HDC1080  // Capteur I2C HDC1080
   #define MODE_Wifi  // Wifi sinon Ethernet
   //#define Sans_securite
   #define Sans_websocket
-<<<<<<< HEAD
   #define OTA
   #define ENVOI
   #define STOCKAGE
@@ -48,15 +36,6 @@
   //#define ESP32_Fire2
   #define MODE_Wifi  // Wifi sinon Ethernet
   //#define Sans_websocket
-=======
-#endif
-
-#ifdef ESP_CHAUDIERE  // Chaudiere
-  #define ESP32_uPesy
-  //#define ESP32_Fire2
-  #define MODE_Wifi  // Wifi sinon Ethernet
-  #define Sans_websocket
->>>>>>> 9a87e3d8980893dde2978d55b45a3be30a751430
   //#define Sans_securite
   //#define WatchDog
 #endif
@@ -196,47 +175,17 @@ uint8_t requete_GetReg(int reg, float* valeur);
 void     setup_nvs_rtc();
 void enreg_24h( uint8_t veille);
 
-<<<<<<< HEAD
 template<typename T>
 void payloadWrite(uint8_t* payload, uint8_t& pos, const T& value)
 {
     memcpy(&payload[pos], &value, sizeof(T));
     pos += sizeof(T);
 }
-=======
->>>>>>> 9a87e3d8980893dde2978d55b45a3be30a751430
 
 void passage_deep_sleep(uint64_t temps);
 
 extern float Vbatt_Th;   // Tension batterie thermomètre
 extern bool Vbatt_Th_I;  // indicateur de réception batt sonde
-
-<<<<<<< HEAD
-=======
-// ESP32-C6 : pins restant à 0 au reset et au boot : 2, 3, 4, 6, 7, 14
-const int PIN_Chaudiere = 2;
-const int PIN_Text = 36;  //  Text:Entrée analogique 32 à 36 et 39
-#ifdef ESP32_v1
-const int PIN_RXModbus = 16;  // s3:18  devkitv1:16 RO
-const int PIN_TXModbus = 17;  // s3:17  devkitv1:17 DI
-#endif
-#ifdef ESP32_Fire2
-const int PIN_RXModbus = 18;  // s3:18  devkitv1:16 RO
-const int PIN_TXModbus = 17;  // s3:17  devkitv1:17 DI
-#endif
-#ifdef ESP32_uPesy
-const int PIN_RXModbus = 16;  // s3:18  devkitv1:16 RO
-const int PIN_TXModbus = 17;  // s3:17  devkitv1:17 DI
-#endif
-const int PIN_on = 19;  // allumage et extinction d'un système avec 2 boutons
-const int PIN_off = 19;
-// const int PIN_RE = 32;
-// const int PIN_DE = 33;
-const int PIN_RXSTM = 18;  // RX STM32
-const int PIN_TXSTM = 17;  // TX STM32
-#endif
-// #define sorties analogique : 25 ou 26 (avec Dacwrite)
->>>>>>> 9a87e3d8980893dde2978d55b45a3be30a751430
 
 
 /* ESP32S3 : Serial0:Pin 42 et 43
@@ -329,12 +278,9 @@ extern int16_t valT[NB_Val_Graph][NB_CAPT][4];
 extern int16_t graphique[NB_Val_Graph][10];
 extern int16_t batt_sonde[NB_CAPT][20];
 extern uint16_t Seuil_batt_sonde;  // millivolt
-<<<<<<< HEAD
 extern uint16_t Seuil_batt_arret_ESP;  // millivolt
 extern uint8_t type_reveil;  //0:pas de reveil 1: réveil par timer, 2: réveil par bouton_reveil 3:reveil par PIR
 
-=======
->>>>>>> 9a87e3d8980893dde2978d55b45a3be30a751430
 extern uint8_t Cons_eco;
 extern TimerHandle_t xTimer_cycle_chaud;
 extern uint8_t compteur_graph;
