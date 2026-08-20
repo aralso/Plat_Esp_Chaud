@@ -433,18 +433,22 @@ const char index_html[] PROGMEM = R"rawliteral(
                   </div>
               </div>
               <hr style="width:100px">
-              <p> 1 : mode reseau (11-12:AP, 13:routeur, 14:filaire)<br>
-                  2 : Nb_reset<br>
-                  3 : reset-13<br>
-                  4 : Periode cycle<br>
+              <p> 1 : log detail : 0:rien 4:max<br>
+                  2 : mode reseau (11-12:AP, 13:routeur, 14:filaire)<br>
+                  3 : Nb_reset<br>
+                  4 : reset-13<br>
                   5 : cycle rapide - 0(h)-12(min)<br>
-                  6 : log detail : 0:rien 4:max<br>
+                  6 : Periode cycle<br>
                   7 : délai écoute websocket<br>
                   8 : Skip graph : 1 valeur sur X<br>
                   9 : Seuil batt sonde<br>
                   10: Freq Log batterie(jours)<br>
-                  11 : consigne économie<br>
-                  12 : temps éveillé (sec) (sonde)<br>
+                  15 : pas de veille<br>
+                  16 : prolong veille<br>
+                  17 : action stockage<br>
+                  18 : action envoi<br>
+                  34 : latitude<br>
+                  35 : longitude<br>
                   41 : canal wifi <br>
                   42 : canal wifi prérentiel (sonde)<brW
                   <br>
@@ -483,8 +487,7 @@ const char index_html[] PROGMEM = R"rawliteral(
                   8 : websocket On (1-2)<br>
                   9 : websocket<br>
                   10 : websock id<br>
-                  11 : adresse Chaudiere<br>
-    
+                  11 : (L)adresse Mac module<br>
 
 
             <div>

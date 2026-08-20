@@ -2,10 +2,12 @@
 
 #define VARIABLES_H
 
+#include <stddef.h>  // for size_t
+#include <Arduino.h>  // for IPAddress, String types
 
 // variables externes
 
-#define NB_CAPT 3  // 3 capteurs remote
+#define NB_CAPT 6  // 6 capteurs remote
 
 #define ESP_TJ_ACTIF     // Rôle principal 
 
@@ -52,8 +54,6 @@
 //#define STM32  //incompatible du modbus, sauf à changer les pin
 // #define OTA
 
-#define LATITUDE "48.8461"  // Garches => pour récupération Temp Ext
-#define LONGITUDE "2.1889"
 
 // Definir le canal WIFI ici (doit correspondre au routeur pour la Chaudière)
 // ⚠️ IMPORTANT : Ce canal DOIT correspondre au canal de votre routeur WiFi
@@ -76,6 +76,74 @@ typedef struct __attribute__((packed)) {   // packed permet d'éviter les octets
     uint8_t payload[MAX_PAYLOAD];
 } Message_EspNow;
 
+
+
+// structure des paramètres 
+typedef enum ParamType {
+  U8,
+  U16,
+  IP,
+  STR,
+  U32
+} ParamType;
+
+typedef struct Param {
+  const char* key;
+  uint8_t order;
+  ParamType type;
+ 
+  uint32_t min16;   // numeric lower bound (used for U8/U16/U32)
+  uint32_t max16;   // numeric upper bound
+ 
+  uint32_t def_u16; // default numeric value (fits U8/U16/U32)
+  uint8_t rtc_valid;  // 0: not valid, 1: valid
+  const char* def_str;
+  void* var;
+  uint8_t size;      // taille du buffer (0 pour U8/U16)
+} Param;
+
+// Forward declarations for variables used in PARAMS
+extern uint8_t mode_reseau;
+extern uint16_t nb_reset;
+extern  uint8_t periode_cycle;
+extern  uint8_t mode_rapide;
+extern uint8_t log_detail;
+extern uint8_t DelaiWebsocket;
+extern  uint8_t skip_graph;
+extern uint16_t Seuil_batt_sonde;
+extern  uint8_t Nb_jours_Batt_log;
+extern  uint16_t prolong_veille;
+extern  uint8_t action_stockage;
+extern  uint8_t action_envoi;
+extern char nom_routeur[];
+extern char mdp_routeur[];
+extern uint8_t websocket_on;
+extern char ip_websocket[];
+extern uint8_t id_websocket;
+extern uint8_t WIFI_CHANNEL;
+extern  uint8_t last_wifi_channel;
+extern IPAddress local_ip;
+extern IPAddress gateway;
+extern IPAddress subnet;
+extern IPAddress primaryDNS;
+extern IPAddress secondaryDNS;
+extern uint8_t cap_nb_images;
+extern uint8_t cap_interval_dsec;
+extern uint8_t cap_size;
+extern uint8_t cap_jpg_comp;
+extern char latitude[];
+extern char longitude[];
+extern uint8_t pas_de_veille;
+extern uint8_t im_x_debut;
+extern uint8_t im_x_fin;
+extern uint8_t im_y_debut;
+extern uint8_t im_y_fin;
+
+// Current camera JPEG quality (camera sensor 'quality' value, e.g. 63..4)
+extern uint8_t current_sensor_quality;
+
+extern const size_t PARAMS_COUNT;
+extern Param PARAMS[];
 
 
 //  -------  CONFIGURATION DES PINS
@@ -172,7 +240,6 @@ void traitement_rx(UartMessage_t* mess);
 uint8_t requete_Get_appli(const char* var, float* valeur);
 uint8_t requete_Set_appli(String param, float valf);
 uint8_t requete_GetReg(int reg, float* valeur);
-void     setup_nvs_rtc();
 void enreg_24h( uint8_t veille);
 
 template<typename T>
@@ -233,15 +300,13 @@ constexpr int NB_Val_Graph = 99;
 #define MAX_DUMP 6900              // 600 + 1050 car par graphique
 extern char buffer_dmp[MAX_DUMP];  // max 250 logs, 16 octets chacun
 
-extern RTC_DATA_ATTR uint8_t esp_now_actif;  // 0:esp_now inactif  1:actif
+extern  uint8_t esp_now_actif;  // 0:esp_now inactif  1:actif
 
 extern uint8_t protocole;
 extern QueueHandle_t eventQueue;  // File d'attente des événements sequenceur
 extern uint16_t erreur_queue;
 extern TimerHandle_t debounceTimer;
 extern TimerHandle_t xTimer_activ_chaud;
-extern RTC_DATA_ATTR uint8_t periode_cycle;
-extern RTC_DATA_ATTR uint8_t mode_rapide;
 extern float Tint, Text, Humid;
 
 
@@ -252,32 +317,24 @@ extern float Tint, Text, Humid;
 
 extern uint8_t cpt_securite;
 extern uint8_t WIFI_CHANNEL;
-extern RTC_DATA_ATTR uint8_t
-    last_wifi_channel;     // Mémorisation du canal Wifi en DeepSleep
 extern uint8_t rtc_valid;  // 0:cold reset  1:reset apres deep sleep
-extern RTC_DATA_ATTR uint16_t
-    cpt_cycle_batt;                   // Compteur cycles pour mesure batterie
+extern  uint16_t  cpt_cycle_batt;                   // Compteur cycles pour mesure batterie
 extern volatile uint8_t ackReceived;  // global pour indiquer que le peer a acké
 extern volatile int ackChannel;       // canal où ça a marché
-extern uint8_t mode_reseau;
 extern uint8_t init_time;
 extern float heure;
 
-
-extern RTC_DATA_ATTR uint8_t skip_graph;
-
 extern unsigned long last_remote_Tint_time, last_remote_Text_time,
     last_remote_heure_time;
-extern RTC_DATA_ATTR uint16_t err_Tint, err_Text, err_Heure;
+extern  uint16_t err_Tint, err_Text, err_Heure;
 
-extern RTC_DATA_ATTR float tempI_moy24h, tempE_moy24h, Hum_24h, HA_moy24h;
-extern RTC_DATA_ATTR uint8_t cpt24_Tint, cpt24_Text, cpt24_Hum, cpt24_HA;
+extern  float tempI_moy24h, tempE_moy24h, Hum_24h, HA_moy24h;
+extern  uint8_t cpt24_Tint, cpt24_Text, cpt24_Hum, cpt24_HA;
 
-extern char mdp_routeur[];
 extern int16_t valT[NB_Val_Graph][NB_CAPT][4];
 extern int16_t graphique[NB_Val_Graph][10];
 extern int16_t batt_sonde[NB_CAPT][20];
-extern uint16_t Seuil_batt_sonde;  // millivolt
+
 extern uint16_t Seuil_batt_arret_ESP;  // millivolt
 extern uint8_t type_reveil;  //0:pas de reveil 1: réveil par timer, 2: réveil par bouton_reveil 3:reveil par PIR
 
@@ -285,10 +342,8 @@ extern uint8_t Cons_eco;
 extern TimerHandle_t xTimer_cycle_chaud;
 extern uint8_t compteur_graph;
 
-extern RTC_DATA_ATTR uint8_t etat_now;
-extern uint8_t Nb_jours_Batt_log;
+extern  uint8_t etat_now;
 
-extern uint8_t etat_compr;
 extern volatile bool force_stay_awake;
 extern unsigned long wake_up_time;  // Temps de réveil/dernière activité
 
