@@ -84,6 +84,9 @@ static bool eth_connected = false;
 #include "ClosedCube_HDC1080.h"
 #include "driver/rtc_io.h"
 
+#ifdef SDCARD
+  #include "SDMMC.h"
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -123,6 +126,8 @@ RTC_NOINIT_ATTR uint8_t pas_de_veille;
 RTC_NOINIT_ATTR uint16_t prolong_veille;
 RTC_NOINIT_ATTR uint8_t action_stockage;
 RTC_NOINIT_ATTR uint8_t action_envoi;
+
+uint8_t sdcard_ok;
 
 uint8_t init_masquage=1;
 RTC_NOINIT_ATTR uint8_t cpt24h_batt;
@@ -1882,6 +1887,10 @@ void setup()
 
   #endif  // fin OTA
 
+
+  #ifdef SDCARD
+    if (!sd_init()) sdcard_ok=1;
+  #endif
 
   //WiFi.setSleep(true);
 
@@ -4618,6 +4627,11 @@ server.on("/verif", HTTP_GET, [](AsyncWebServerRequest *request){
   server.onNotFound([](AsyncWebServerRequest *request) {
     request->send(404, "text/plain", "Not found");
   });
+
+  #ifdef SDCARD
+    server_routes_SDCARD();
+  #endif
+
 }
 
 const char* dumpTasksInfo() {

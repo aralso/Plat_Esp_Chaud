@@ -33,6 +33,7 @@
 
 #ifdef ESP_TJ_ACTIF  // Serveur
   #define ESP32_S3
+  #define SDCARD   // Carte Micro SD
   #define OTA
 
   //#define ESP32_Fire2
