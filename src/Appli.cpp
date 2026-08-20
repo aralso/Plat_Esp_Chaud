@@ -20,19 +20,19 @@ extern WiFiClient client;
 extern Preferences preferences_nvs;  // Déclaration externe
 
 
-uint8_t  WIFI_CHANNEL;
-RTC_DATA_ATTR uint8_t etat_now;
-uint16_t Seuil_batt_sonde;  // millivolt
-uint8_t Nb_jours_Batt_log;
+RTC_NOINIT_ATTR uint8_t  WIFI_CHANNEL;
+RTC_NOINIT_ATTR uint8_t etat_now;
+RTC_NOINIT_ATTR uint16_t Seuil_batt_sonde;  // millivolt
+RTC_NOINIT_ATTR uint8_t Nb_jours_Batt_log;
 
 int16_t batt_sonde[NB_CAPT][20];  // valeur batterie sonde remode
 
-RTC_DATA_ATTR uint8_t compteur_graph;
-RTC_DATA_ATTR uint16_t compteur_24h;
+RTC_NOINIT_ATTR uint8_t compteur_graph;
+RTC_NOINIT_ATTR uint16_t compteur_24h;
 
 S_Node Node[NB_CAPT];
 
-RTC_DATA_ATTR uint8_t mac_gw[6];   // B0:CB:D8:E9:0C:74  adresse mac esp_dest
+RTC_NOINIT_ATTR uint8_t mac_gw[6];   // B0:CB:D8:E9:0C:74  adresse mac esp_dest
 volatile uint8_t ackReceived = false;  // global pour indiquer que le peer a acké
 volatile int ackChannel = -1;       // canal où ça a marché
 
@@ -201,7 +201,7 @@ void setup_2()
 {
   #ifdef ESP_TJ_ACTIF
 
-    readLastLogsG(99);
+    if (boot_rapide < 3) readLastLogsG(99);
 
     // Configuration WiFi en mode Station pour ESP-NOW
 

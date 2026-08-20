@@ -103,15 +103,16 @@ typedef struct Param {
 } Param;
 
 // Forward declarations for variables used in PARAMS
+extern uint8_t log_detail;
 extern uint8_t mode_reseau;
 extern uint16_t nb_reset;
-extern  uint8_t periode_cycle;
 extern  uint8_t mode_rapide;
-extern uint8_t log_detail;
+extern  uint8_t periode_cycle;
 extern uint8_t DelaiWebsocket;
 extern  uint8_t skip_graph;
 extern uint16_t Seuil_batt_sonde;
 extern  uint8_t Nb_jours_Batt_log;
+extern uint8_t boot_rapide;
 extern  uint16_t prolong_veille;
 extern  uint8_t action_stockage;
 extern  uint8_t action_envoi;
@@ -122,11 +123,11 @@ extern char ip_websocket[];
 extern uint8_t id_websocket;
 extern uint8_t WIFI_CHANNEL;
 extern  uint8_t last_wifi_channel;
-extern IPAddress local_ip;
-extern IPAddress gateway;
-extern IPAddress subnet;
-extern IPAddress primaryDNS;
-extern IPAddress secondaryDNS;
+extern uint8_t local_ip[4];
+extern uint8_t gateway[4];
+extern uint8_t subnet[4];
+extern uint8_t primaryDNS[4];
+extern uint8_t secondaryDNS[4];
 extern uint8_t cap_nb_images;
 extern uint8_t cap_interval_dsec;
 extern uint8_t cap_size;
@@ -373,6 +374,7 @@ void event_cycle();
 
 // Fonctions WiFi
 uint8_t connectWiFiWithDiagnostic();
+uint8_t connectWiFiRapide();
 void diagnoseWiFiError();
 void protectUARTDuringWiFi();
 

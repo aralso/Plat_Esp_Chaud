@@ -443,6 +443,7 @@ const char index_html[] PROGMEM = R"rawliteral(
                   8 : Skip graph : 1 valeur sur X<br>
                   9 : Seuil batt sonde<br>
                   10: Freq Log batterie(jours)<br>
+                  11: boot rapide<br>
                   15 : pas de veille<br>
                   16 : prolong veille<br>
                   17 : action stockage<br>

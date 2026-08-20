@@ -118,14 +118,14 @@ extern "C" {
 
 uint8_t err_wifi_repet;  // permet de resetter si le wifi ne se rétablit pas au bout de 4 jours
 uint16_t Seuil_batt_arret_ESP;  // millivolt
-uint8_t pas_de_veille;
+RTC_NOINIT_ATTR uint8_t pas_de_veille;
 
-RTC_DATA_ATTR uint16_t prolong_veille;
-RTC_DATA_ATTR uint8_t action_stockage;
-RTC_DATA_ATTR uint8_t action_envoi;
+RTC_NOINIT_ATTR uint16_t prolong_veille;
+RTC_NOINIT_ATTR uint8_t action_stockage;
+RTC_NOINIT_ATTR uint8_t action_envoi;
 
 uint8_t init_masquage=1;
-RTC_DATA_ATTR uint8_t cpt24h_batt;
+RTC_NOINIT_ATTR uint8_t cpt24h_batt;
 
 uint8_t envoi_data_gateway(Message_EspNow mess_esp, uint16_t taille);
 uint8_t parseMacString(const char* str, uint8_t mac[6]);
@@ -158,11 +158,11 @@ char buffer_dmp[MAX_DUMP];  // max 250 logs, 16 octets chacun
   IPAddress SprimaryDNS(8, 8, 8, 8);      // DNS Primaire (Google DNS)
   IPAddress SsecondaryDNS(8, 8, 4, 4);    // DNS Secondaire (Google DNS)
 
-  IPAddress local_ip;  // Définir l'adresse IP statique souhaitée Garches:251.50 Catalane:248.5
-  IPAddress gateway;   // Définir la passerelle (généralement l'adresse du routeur)
-  IPAddress subnet;    // Masque de sous-réseau
-  IPAddress primaryDNS;      // DNS Primaire (Google DNS)
-  IPAddress secondaryDNS;    // DNS Secondaire (Google DNS)
+  RTC_NOINIT_ATTR uint8_t local_ip[4];  // Adresse IP statique
+  RTC_NOINIT_ATTR uint8_t gateway[4];   // Passerelle
+  RTC_NOINIT_ATTR uint8_t subnet[4];    // Masque de sous-réseau
+  RTC_NOINIT_ATTR uint8_t primaryDNS[4];      // DNS primaire
+  RTC_NOINIT_ATTR uint8_t secondaryDNS[4];    // DNS secondaire
 
 
 #else  // WT32
@@ -195,39 +195,39 @@ volatile bool debounceFlag = false;
 // etat d'un system externe commandable par Pin_on et pin_off  : 0 éteint, 1:allumé
 uint8_t systeme_marche=0;
 
-uint8_t mode_reseau=13;  //  0:pas de reseau 11:wifi_AP_usine  12:wifi_AP   13:wifi_routeur  14:Ethernet filaire 
+RTC_NOINIT_ATTR uint8_t mode_reseau=13;  //  0:pas de reseau 11:wifi_AP_usine  12:wifi_AP   13:wifi_routeur  14:Ethernet filaire 
 #ifdef NO_RESEAU
   mode_reseau=0;
 #endif
 
-char nom_routeur[16]="";
-char mdp_routeur[16]="";
-char latitude[16]="";
-char longitude[16]="";
+RTC_NOINIT_ATTR char nom_routeur[16]="";
+RTC_NOINIT_ATTR char mdp_routeur[16]="";
+RTC_NOINIT_ATTR char latitude[16]="";
+RTC_NOINIT_ATTR char longitude[16]="";
 
 unsigned long last_remote_Tint_time = 0, last_remote_Text_time=0, last_remote_heure_time=0;
 
 int16_t  valT [NB_Val_Graph][NB_CAPT][4];
-RTC_DATA_ATTR int16_t  graphique [NB_Val_Graph][10];
+RTC_NOINIT_ATTR int16_t  graphique [NB_Val_Graph][10];
 
 // Status
-RTC_DATA_ATTR uint32_t rtc_magic = 0xDEADBEEF;
+RTC_NOINIT_ATTR uint32_t rtc_magic = 0xDEADBEEF;
 uint8_t rtc_valid;  // 0:non valide-cold reset  1:reset apres deep sleep : RTC valide
 uint16_t nb_err_reseau;
-RTC_DATA_ATTR uint16_t cpt_cycle_batt; // Compteur cycles pour mesure batterie
+RTC_NOINIT_ATTR uint16_t cpt_cycle_batt; // Compteur cycles pour mesure batterie
 uint16_t erreur_queue=0;
 uint8_t num_err_queue[5];
 uint8_t cpt_init=0;
-RTC_DATA_ATTR uint8_t etat_ESP_stop;  // 0:normal 1:arrêté pour batterie faible (deepsleep longue duree)
+RTC_NOINIT_ATTR uint8_t etat_ESP_stop;  // 0:normal 1:arrêté pour batterie faible (deepsleep longue duree)
 
 // websocket
-uint8_t websocket_on=0;     // 1:off 2:on
-char ip_websocket[40]="";   // ws://webcam.hd.free.fr:8081";
-uint8_t id_websocket=0;
+RTC_NOINIT_ATTR uint8_t websocket_on=0;     // 1:off 2:on
+RTC_NOINIT_ATTR char ip_websocket[40]="";   // ws://webcam.hd.free.fr:8081";
+RTC_NOINIT_ATTR uint8_t id_websocket=0;
 using namespace websockets;
 WebsocketsClient wsClient;  // Client WebSocket
 bool isWebSocketConnected = false;
-uint8_t DelaiWebsocket = 1;
+RTC_NOINIT_ATTR uint8_t DelaiWebsocket = 1;
 uint16_t cpt_ws_timeout=0, cpt_ws_ping=0;
 
 volatile bool force_stay_awake = false; // Flag pour rester éveillé après appui bouton
@@ -238,17 +238,19 @@ unsigned long wake_up_time = 0; // Temps de réveil
 #define WDT_TIMEOUT 80  // reset watchdog dividé par 3 => 24 secondes
 uint16_t param_wdt_delay = 1;
 
+RTC_NOINIT_ATTR uint8_t boot_rapide;  // 0:lent 1:normal 2:rapide 3:très rapide
+
 
 const char *ntpServer = "pool.ntp.org";
 const long gmtOffset_sec = 3600 * 1;      // fuseau horaire GMT+1h
 const int daylightOffset_sec = 3600 * 1;  // heure d'été
 struct tm timeinfo;
-RTC_DATA_ATTR uint8_t init_time = 0;  // 0:pas initialisé, 1:à8h, 3:avec internet 4:manuel
-RTC_DATA_ATTR uint8_t last_wifi_channel; // Mémorisation du canal Wifi en DeepSleep
-RTC_DATA_ATTR uint8_t esp_now_actif;  // 0:esp_now inactif  1:actif
+RTC_NOINIT_ATTR uint8_t init_time = 0;  // 0:pas initialisé, 1:à8h, 3:avec internet 4:manuel
+RTC_NOINIT_ATTR uint8_t last_wifi_channel; // Mémorisation du canal Wifi en DeepSleep
+RTC_NOINIT_ATTR uint8_t esp_now_actif;  // 0:esp_now inactif  1:actif
 float Vbatt_ESP = 0.0;   // Stockage tension batterie
 
-RTC_DATA_ATTR uint8_t periode_cycle;
+RTC_NOINIT_ATTR uint8_t periode_cycle;
 
 
 //Freertos
@@ -299,7 +301,7 @@ typedef struct __attribute__((packed)) {  // padding 16 : pour éviter  mauvaise
 const esp_partition_t* logPartition;
 size_t logOffset = 0;
 uint8_t log_err=2;  // 1 si la partition log_flash n'est pas trouvée  2:autre problème
-uint8_t log_detail;
+RTC_NOINIT_ATTR uint8_t log_detail;
 
 typedef struct __attribute__((packed)) {  // padding 16 : pour éviter  mauvaises surprises
   uint32_t timestamp;  // 4 octets
@@ -329,9 +331,9 @@ TimerHandle_t xTimer_Securite;
 
 WiFiClient client;
 
-RTC_DATA_ATTR uint8_t mode_rapide;
+RTC_NOINIT_ATTR uint8_t mode_rapide;
 
-uint16_t nb_reset;
+RTC_NOINIT_ATTR uint16_t nb_reset;
 uint32_t time_reset0;  // temps lors du precedent reset
 uint32_t time_reset1;  // temps lors reset actuel
 
@@ -340,9 +342,9 @@ uint8_t etat_connect_ethernet = 0;
 AsyncWebServer server(80);
 
 uint8_t cycle24h;
-RTC_DATA_ATTR float  tempI_moy24h=0, tempE_moy24h=0, Hum_24h=0, HA_moy24h=0;
-RTC_DATA_ATTR uint8_t cpt24_Tint=0, cpt24_Text=0,  cpt24_Hum=0, cpt24_HA=0;
-RTC_DATA_ATTR uint16_t TextV=0, TintV=0, HumV=0, HAV=0;  // pour stockage dans la partition log_flashG
+RTC_NOINIT_ATTR float  tempI_moy24h=0, tempE_moy24h=0, Hum_24h=0, HA_moy24h=0;
+RTC_NOINIT_ATTR uint8_t cpt24_Tint=0, cpt24_Text=0,  cpt24_Hum=0, cpt24_HA=0;
+RTC_NOINIT_ATTR uint16_t TextV=0, TintV=0, HumV=0, HAV=0;  // pour stockage dans la partition log_flashG
 
 // OTA
 bool otaEnabled = false;
@@ -405,7 +407,7 @@ uint8_t cpt_securite = 0;
 unsigned long previousMillis_temp = 20000;  // 1er à 20s
 unsigned long previousMillis_inittime;
 char St_Uptime[35];
-RTC_DATA_ATTR uint8_t skip_graph;
+RTC_NOINIT_ATTR uint8_t skip_graph;
 
 
 
@@ -1071,6 +1073,32 @@ void init_ram_variables()
   Text=10.0;
 }
 
+static IPAddress makeIPAddress(const uint8_t address[4])
+{
+  return IPAddress(address[0], address[1], address[2], address[3]);
+}
+
+static void storeIPAddress(uint8_t destination[4], const IPAddress& address)
+{
+  for (uint8_t i = 0; i < 4; ++i) {
+    destination[i] = address[i];
+  }
+}
+
+static IPAddress defaultIPAddressForKey(const char* key)
+{
+  if (key == nullptr) return IPAddress(0, 0, 0, 0);
+
+  #ifdef MODE_Wifi
+    if (strcmp(key, "ipAdd") == 0) return Slocal_ip;
+    if (strcmp(key, "ipGat") == 0) return Sgateway;
+    if (strcmp(key, "ipSub") == 0) return Ssubnet;
+    if (strcmp(key, "ipDNS") == 0) return SprimaryDNS;
+    if (strcmp(key, "ipDNS2") == 0) return SsecondaryDNS;
+  #endif
+  return IPAddress(0, 0, 0, 0);
+}
+
 
 uint8_t nvs_read(Param &p) {
 
@@ -1123,23 +1151,26 @@ uint8_t nvs_read(Param &p) {
 
       // =========================
       case IP: {
-        uint32_t v = preferences_nvs.getULong(p.key, 0ul);
+        uint8_t* ipBytes = static_cast<uint8_t*>(p.var);
+        bool hasValue = p.key != nullptr && preferences_nvs.isKey(p.key);
+        IPAddress ip = hasValue
+          ? IPAddress(preferences_nvs.getULong(p.key, 0ul))
+          : defaultIPAddressForKey(p.key);
 
-        // Treat IP parameters as IPv4 addresses stored in IPAddress objects
-        IPAddress *ipPtr = (IPAddress*)p.var;
-
-        if (v < p.min16 || v > p.max16) {
-          v = (uint32_t)p.def_u16;
-          if (p.key != nullptr && p.key[0] != '\0') preferences_nvs.putULong(p.key, v);
-
-          IPAddress ip_default(v);
-          Serial.printf("****RAZ NVS parametre %s : defaut %s\n", p.key, ip_default.toString().c_str());
-          if (ipPtr) *ipPtr = ip_default;
+        if (!hasValue) {
+          preferences_nvs.putULong(p.key, (uint32_t)ip);
+          Serial.printf("****RAZ NVS parametre %s : defaut %s\n", p.key, ip.toString().c_str());
+          if (ipBytes) storeIPAddress(ipBytes, ip);
           return 1;
         }
 
-        IPAddress ip(v);
-        if (ipPtr) *ipPtr = ip;
+        uint32_t v = preferences_nvs.getULong(p.key, 0ul);
+        if (v < p.min16 || v > p.max16) {
+          ip = defaultIPAddressForKey(p.key);
+          preferences_nvs.putULong(p.key, (uint32_t)ip);
+          Serial.printf("****RAZ NVS parametre %s : defaut %s\n", p.key, ip.toString().c_str());
+        }
+        if (ipBytes) storeIPAddress(ipBytes, ip);
         if (log_detail>=3) Serial.printf("parametre %s : valeur %s\n", p.key, ip.toString().c_str());
         return 0;
       }
@@ -1244,11 +1275,15 @@ void i2cBootRecovery() {
 void setup()
 {
   
-  delay(3000);
+  if (boot_rapide < 2) delay(3000);
+
   // Cause reset :
   resetReason0 = (uint8_t) esp_reset_reason();
   Serial.begin(115200);
   
+  Serial.printf("milli A: %lu  boot_rapide:%i log_detail:%i\n", millis(), boot_rapide, log_detail);
+
+
   // Cause réveil du deep/light_sleep (undefined si pas de reveil deep/light sleep)
   esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause(); // 2:ext0(1pin) 3:Ext1(2pins) 7:GPIO 4:Timer
   uint8_t reveil=0;
@@ -1293,6 +1328,7 @@ void setup()
       wake_up_time = millis() + 50000;
   }
 
+
   strncpy(resetREASON0, verbose_reset_reason(resetReason0), sizeof(resetREASON0) - 1);
   resetREASON0[sizeof(resetREASON0) - 1] = '\0'; // Garantit la terminaison null
 
@@ -1310,6 +1346,7 @@ void setup()
     rtc_valid = 1;
   }
   init_ram_variables(); // RTC conservé. initialisation de la ram normale (aléatoire)
+
 
   /* autre (Type_reveil=0, pas rtc): poweron => chargement nvs_rtc, puis comme timer
       rtc & type_reveil=1; timer  => pas de nvs, lecture temp. si stockage ram =>rien
@@ -1392,6 +1429,8 @@ void setup()
   Serial.printf("**** Initialisation - reset: %s  type_rev:%i Sleep:%i rtc:%i\n\r",resetREASON0, type_reveil, wakeup_reason, rtc_valid );
   setup_0();   //  --- valeur initiales des graphiques
 
+    Serial.printf("milli D: %lu\n", millis());
+
   if (type_reveil>=4) // bouton ou toujours actif
   {
     // ---------  Creation des taches et des queues -------------------
@@ -1463,21 +1502,12 @@ void setup()
     #endif
   }
 
+
   // ------  NVS Eeprom  ---------------------
+    preferences_nvs.begin("NVS_App", false);
 
   if ((type_reveil>=4) || (!type_reveil))
   {
-    preferences_nvs.begin("NVS_App", false);
-
-
-    // Initialisation variable skip graph
-    skip_graph = preferences_nvs.getUChar("Skip", 0);
-    if ((!skip_graph) || (skip_graph > 50))  // entre 1 et 50
-    {
-      Serial.println("Raz skip graph : valeur par defaut:2");
-      skip_graph = 12;  // 1 valeur sur 12
-      preferences_nvs.putUChar("Skip", skip_graph);
-    }
 
 
     if (type_reveil>=4)
@@ -1487,9 +1517,19 @@ void setup()
       nb_reset++;
       preferences_nvs.putUShort("nb_reset", nb_reset);
 
-      // lecture de tous les paramètres nvs uint8_t, uint16_t, uint32_t(IP) et string
-      for (size_t i = 0; i < PARAMS_COUNT; ++i) {
-        nvs_read(PARAMS[i]);
+      if (!rtc_valid) // si rtc non valide (cold reset) => lecture de tous les paramètres nvs
+      {
+        if (log_detail>=4) Serial.printf("NVS : nb de parametres : %d\n\r", PARAMS_COUNT);
+        // lecture de tous les paramètres nvs uint8_t, uint16_t, uint32_t(IP) et string
+        for (size_t i = 0; i < PARAMS_COUNT; ++i) {
+          nvs_read(PARAMS[i]);
+          if (i==1)  // log_detail
+          {
+              apply_log_detail(log_detail);
+              Serial.printf("log_detail:%i\n\r", log_detail);
+          }
+
+        }
       }
 
 
@@ -1535,8 +1575,11 @@ void setup()
     }
   }
 
+  if (log_detail>=4) Serial.printf("milli F: %lu\n", millis());
+
   setup_1();  // --------------   initialisation sonde temperature------------
 
+  if (log_detail>=2) Serial.printf("milli G: %lu\n", millis());
 
 
   // -------------- partition "log_flash" custom  pour Write-log -------------------
@@ -1558,7 +1601,7 @@ void setup()
     }
 
     writeLog('R', resetReason0, rtc_valid, wakeup_reason, "Reset");
-    delay(500);
+    if (boot_rapide < 2) delay(500);
 
     if (log_detail>=4) 
     {
@@ -1579,6 +1622,8 @@ void setup()
     log_errG=0;
     if (log_detail>=4) Serial.println("Partition 'log_flash_G' trouvée.");
   }
+
+  if (log_detail>=2) Serial.printf("milli H: %lu\n", millis());
 
   // -------------   Configuration des timers FreeRTOS (max 49 jours)   --------------------
 
@@ -1629,14 +1674,18 @@ void setup()
     xTimerStart(xTimer_Watchdog,100);
   #endif
 
-  delay(1000); // Attente 4 sec pour que les boutons se stabilisent
+  if (log_detail>=2) Serial.printf("milli I: %lu\n", millis());
+
+  //delay(1000); // Attente 4 sec pour que les boutons se stabilisent
 
   xTimerStart(xTimer_Init,100);
   xTimerStart(xTimer_24H,100);
   xTimerStart(xTimer_Cycle,100);
   //xTimerStart(xTimer_Compresseur,100);
 
-  delay(1000); // Attente 4 sec pour que les boutons se stabilisent
+  if (boot_rapide < 3) delay(1000); // Attente 4 sec pour que les boutons se stabilisent
+
+  if (log_detail>=2) Serial.printf("milli J: %lu\n", millis());
 
   // Reset du watchdog avant de démarrer le réseau
   #ifdef WatchDog
@@ -1679,11 +1728,11 @@ void setup()
 
       //WiFi.mode(WIFI_STA);
       #ifdef DEBUG
-        local_ip = Slocal_ip;
-        gateway = Sgateway;
-        subnet = Ssubnet;
-        primaryDNS = SprimaryDNS;
-        secondaryDNS = SsecondaryDNS;
+        storeIPAddress(local_ip, Slocal_ip);
+        storeIPAddress(gateway, Sgateway);
+        storeIPAddress(subnet, Ssubnet);
+        storeIPAddress(primaryDNS, SprimaryDNS);
+        storeIPAddress(secondaryDNS, SsecondaryDNS);
         
         strncpy(nom_routeur, ssid, sizeof(nom_routeur) - 1);
         nom_routeur[sizeof(nom_routeur) - 1] = '\0'; // Sécurisation de la terminaison
@@ -1695,22 +1744,30 @@ void setup()
       
       // Protection UART avant connexion WiFi
       //protectUARTDuringWiFi();
-      
-      uint8_t wifiResult = connectWiFiWithDiagnostic();
-      
+      if (log_detail>=2) Serial.printf("milli J1: %lu\n", millis());
+
+      uint8_t wifiResult;
+      if (boot_rapide >2)
+        wifiResult = connectWiFiRapide();
+      else
+      {
+        wifiResult = connectWiFiWithDiagnostic();
+        if (wifiResult == 0) {
+          etat_connect_ethernet = 2;
+          eth_connected = true;
+        }
+        if (WiFi.status() == WL_CONNECTED) {
+          //Serial.println("Wifi OK");
+          // Optimisation consommation : activation du Modem Sleep
+          //WiFi.setSleep(true);
+        }
+        else Serial.println("Wifi pas ok");
+      }
+      if (log_detail>=2) Serial.printf("milli J2: %lu\n", millis());
+
       // Protection UART après connexion WiFi
       //protectUARTDuringWiFi();
       
-      if (wifiResult == 0) {
-        etat_connect_ethernet = 2;
-        eth_connected = true;
-      }
-      if (WiFi.status() == WL_CONNECTED) {
-        //Serial.println("Wifi OK");
-        // Optimisation consommation : activation du Modem Sleep
-        //WiFi.setSleep(true);
-      }
-      else Serial.println("Wifi pas ok");
     }
 
   #else  // WT32 Ethernet
@@ -1738,18 +1795,22 @@ void setup()
 
   #endif // wifi
 
+  if (log_detail>=2) Serial.printf("milli K: %lu\n", millis());
+
   // Configuration du serveur NTP
     configTzTime("CET-1CEST,M3.5.0/2,M10.5.0/3", ntpServer);
     //configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
 
     setupRoutes();
+
     server.begin();
 
+  if (log_detail>=2) Serial.printf("milli L: %lu\n", millis());
 
   #endif // No_reseau
 
   printMemoryStatus();
-  delay(100);
+  if (boot_rapide < 1) delay(100);
 
 
   // ------- changement de frequence CPU -------------------
@@ -1769,7 +1830,9 @@ void setup()
 
   printMemoryStatus();
 
-  setup_2();  // Esp_now
+  setup_2();  // Esp_now  et read LogG(99)
+
+  if (log_detail>=2) Serial.printf("milli M: %lu\n", millis());
 
   // ------------  Configuration OTA -----------------
 
@@ -1808,11 +1871,13 @@ void setup()
     ArduinoOTA.begin();
 
     // 🔥 Fenêtre OTA de secours
-    if (log_detail>=3) Serial.println("Fenêtre OTA 5 secondes...");
-    unsigned long start = millis();
-    while (millis() - start < 5000) {
-      ArduinoOTA.handle();
-      delay(10);
+    if (boot_rapide < 2) {
+      if (log_detail>=3) Serial.println("Fenêtre OTA 5 secondes...");
+      unsigned long start = millis();
+      while (millis() - start < 5000) {
+        ArduinoOTA.handle();
+        delay(10);
+      }
     }
 
   #endif  // fin OTA
@@ -1820,7 +1885,7 @@ void setup()
 
   //WiFi.setSleep(true);
 
-  Serial.println("fin setup:");
+  Serial.printf("fin setup: %i ms\n\r", millis());
 
   #ifdef WATCHDOG
     esp_task_wdt_delete(NULL); // desinscription de la tache setup/loop de la surveillance watchdog : permet d'éviter le reset_wdt dans la tache loop
@@ -2423,7 +2488,7 @@ uint8_t requete_Get_String (uint8_t type, String var, char *valeur)
     }
     else if (p.type == IP) {
       if (p.var != nullptr) {
-        IPAddress ip = *((IPAddress*)p.var);
+        IPAddress ip = makeIPAddress(static_cast<const uint8_t*>(p.var));
         ip.toString().toCharArray(valeur, len);
         res = 0;
       }
@@ -2631,7 +2696,42 @@ uint8_t requete_Set_Action(const char *reg, const char *data)
       //Serial.printf("envoi esp_now T=20.2\n\r");
       delay(1000);
     }
-  
+
+        // print variables NVS
+    if (strcmp(reg, "P_NVS") == 0) 
+    { 
+      res=0; 
+      for (size_t i = 0; i < PARAMS_COUNT; ++i) {
+        if (PARAMS[i].key && PARAMS[i].key[0] != '\0') {
+          switch (PARAMS[i].type) {
+            case U8:
+              Serial.printf("parametre %s : %u\n", PARAMS[i].key, *(uint8_t*)PARAMS[i].var);
+              break;
+            case U16:
+              Serial.printf("parametre %s : %u\n", PARAMS[i].key, *(uint16_t*)PARAMS[i].var);
+              break;
+            case U32:
+              Serial.printf("parametre %s : %lu\n", PARAMS[i].key, *(uint32_t*)PARAMS[i].var);
+              break;
+            case STR:
+              Serial.printf("parametre %s : %s\n", PARAMS[i].key, (const char*)PARAMS[i].var);
+              break;
+            case IP: {
+              uint8_t* ipBytes = static_cast<uint8_t*>(PARAMS[i].var);
+              if (ipBytes) {
+                IPAddress ip = makeIPAddress(ipBytes);
+                Serial.printf("parametre %s : valeur %s\n", PARAMS[i].key, ip.toString().c_str());
+              }
+              break;
+            }
+            default:
+              Serial.printf("parametre %s : <type inconnu>\n", PARAMS[i].key);
+              break;
+          }
+        }
+      }
+    }
+
     res2 = requete_action_appli(reg, data);
   }
   
@@ -2662,7 +2762,7 @@ uint8_t requete_Set_String(int param, const char *texte)
         //IP32 = (ip[0] << 24) | (ip[1] << 16) | (ip[2] << 8) | ip[3];
         //Serial.printf("ip:%s %08X\n\r", ip.toString().c_str(), IP32);
         preferences_nvs.putULong("ipAdd", IP32);
-        local_ip = ip;
+        storeIPAddress(local_ip, ip);
       }
     }
     if (param == 51)  // registre 51 : Adresse gateway
@@ -2672,7 +2772,7 @@ uint8_t requete_Set_String(int param, const char *texte)
         res = 0;
         uint32_t IP32 = (uint32_t)ip;  // transforme en uint32_t
         preferences_nvs.putULong("ipGat", IP32);
-        gateway = ip;
+        storeIPAddress(gateway, ip);
       }
     }
     if (param == 52)  // registre 52 : Adresse subnet
@@ -2682,7 +2782,7 @@ uint8_t requete_Set_String(int param, const char *texte)
         res = 0;
         uint32_t IP32 = (uint32_t)ip;  // transforme en uint32_t
         preferences_nvs.putULong("ipSub", IP32);
-        subnet = ip;
+        storeIPAddress(subnet, ip);
       }
     }
     if (param == 53)  // registre 53 : Adresse DNS
@@ -2692,7 +2792,7 @@ uint8_t requete_Set_String(int param, const char *texte)
         res = 0;
         uint32_t IP32 = (uint32_t)ip;  // transforme en uint32_t
         preferences_nvs.putULong("ipDNS", IP32);
-        primaryDNS = ip;
+        storeIPAddress(primaryDNS, ip);
       }
     }
     if (param == 54)  // registre 5 : Adresse DNS2
@@ -2702,7 +2802,7 @@ uint8_t requete_Set_String(int param, const char *texte)
         res = 0;
         uint32_t IP32 = (uint32_t)ip;  // transforme en uint32_t
         preferences_nvs.putULong("ipDNS2", IP32);
-        secondaryDNS = ip;
+        storeIPAddress(secondaryDNS, ip);
       }
     }
     if ((param == 55) && (strlen(texte) <= 15)) // registre 55 : nom routeur
@@ -2993,9 +3093,7 @@ uint8_t requete_SetReg(int param, float valeurf)
         {
           if (p.var != nullptr) {
             uint32_t v = (uint32_t)valeur;
-            // Treat U32 as IPv4 address stored in IPAddress object
-            IPAddress *ipPtr = (IPAddress*)p.var;
-            if (ipPtr) *ipPtr = IPAddress(v);
+            *((uint32_t*)p.var) = v;
             if (p.key != nullptr && p.key[0] != '\0') preferences_nvs.putULong(p.key, v);
             res = 0;
           }
@@ -4657,11 +4755,11 @@ void diagnoseWiFiError() {
   
   // 2. Configuration IP
   Serial.println("2. Configuration IP :");
-  Serial.printf("   - IP statique: %s\n", local_ip.toString().c_str());
-  Serial.printf("   - Gateway: %s\n", gateway.toString().c_str());
-  Serial.printf("   - Subnet: %s\n", subnet.toString().c_str());
-  Serial.printf("   - DNS1: %s\n", primaryDNS.toString().c_str());
-  Serial.printf("   - DNS2: %s\n", secondaryDNS.toString().c_str());
+  Serial.printf("   - IP statique: %s\n", makeIPAddress(local_ip).toString().c_str());
+  Serial.printf("   - Gateway: %s\n", makeIPAddress(gateway).toString().c_str());
+  Serial.printf("   - Subnet: %s\n", makeIPAddress(subnet).toString().c_str());
+  Serial.printf("   - DNS1: %s\n", makeIPAddress(primaryDNS).toString().c_str());
+  Serial.printf("   - DNS2: %s\n", makeIPAddress(secondaryDNS).toString().c_str());
   
   // 3. État actuel du WiFi
   Serial.println("3. État WiFi actuel :");
@@ -4751,8 +4849,14 @@ uint8_t connectWiFiWithDiagnostic() {
     
     // 🔍 DIAGNOSTIC: Forcer le canal WiFique si définie
   if (local_ip[0] != 0) {
-    Serial.printf("Configuration IP statique: %s\n", local_ip.toString().c_str());
-    if (!WiFi.config(local_ip, gateway, subnet, primaryDNS, secondaryDNS)) {
+      IPAddress ipLocal = makeIPAddress(local_ip);
+      IPAddress ipGateway = makeIPAddress(gateway);
+      IPAddress ipSubnet = makeIPAddress(subnet);
+      IPAddress ipPrimaryDNS = makeIPAddress(primaryDNS);
+      IPAddress ipSecondaryDNS = makeIPAddress(secondaryDNS);
+
+      Serial.printf("Configuration IP statique: %s\n", ipLocal.toString().c_str());
+      if (!WiFi.config(ipLocal, ipGateway, ipSubnet, ipPrimaryDNS, ipSecondaryDNS)) {
       Serial.println("❌ ERREUR: Échec de configuration IP statique");
       return 2;
     }
@@ -4770,7 +4874,7 @@ uint8_t connectWiFiWithDiagnostic() {
   int dots = 0;
   
   while (WiFi.status() != WL_CONNECTED && (millis() - startTime) < timeout) {
-    delay(500);
+    delay(100);
     Serial.print(".");
     dots++;
     if (dots % 20 == 0) Serial.println(); // Retour à la ligne tous les 10 secondes
@@ -4780,9 +4884,7 @@ uint8_t connectWiFiWithDiagnostic() {
       esp_task_wdt_reset();
     #endif
   }
-  
-  //Serial.println(); // Retour à la ligne final
-  
+
   // Vérification du résultat
   if (WiFi.status() == WL_CONNECTED) {
     if (log_detail>=4) {
@@ -4799,11 +4901,54 @@ uint8_t connectWiFiWithDiagnostic() {
     // Optimisation consommation : activation du Modem Sleep
     WiFi.setSleep(false);
     return 0;
-  } else {
+
+     } else {
     Serial.println("❌ ÉCHEC de connexion WiFi");
     diagnoseWiFiError();
     return 3;
   }
+}
+
+
+// Fonction de connexion WiFi rapide
+uint8_t connectWiFiRapide()
+{  
+  // Vérifications préliminaires
+  if (strlen(nom_routeur) == 0) {
+    Serial.println("❌ ERREUR: SSID non configuré");
+    return 1;
+  }
+  
+  Serial.printf("Connexion au réseau: %s\n", nom_routeur);
+    // Configuration WiFi en mode Station pour ESP-NOW
+    WiFi.mode(WIFI_STA); 
+    
+    // 🔍 DIAGNOSTIC: Forcer le canal WiFique si définie
+  if (local_ip[0] != 0) {
+      IPAddress ipLocal = makeIPAddress(local_ip);
+      IPAddress ipGateway = makeIPAddress(gateway);
+      IPAddress ipSubnet = makeIPAddress(subnet);
+      IPAddress ipPrimaryDNS = makeIPAddress(primaryDNS);
+      IPAddress ipSecondaryDNS = makeIPAddress(secondaryDNS);
+
+      Serial.printf("Configuration IP statique: %s\n", ipLocal.toString().c_str());
+      if (!WiFi.config(ipLocal, ipGateway, ipSubnet, ipPrimaryDNS, ipSecondaryDNS)) {
+      Serial.println("❌ ERREUR: Échec de configuration IP statique");
+      return 2;
+    }
+  } else {
+    Serial.println("Configuration IP automatique (DHCP)");
+  }
+  
+  // Tentative de connexion
+  if (log_detail>=4) Serial.println("Tentative de connexion...");
+  WiFi.begin(nom_routeur, mdp_routeur);
+  
+  // Fin de la fonction connectWiFiRapide()
+
+  //Serial.println(); // Retour à la ligne final
+
+  return 0; // Indiquer que la fonction s'est terminée sans erreur
 }
 
 // Fonction de protection UART pendant la connexion WiFi

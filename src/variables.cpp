@@ -15,6 +15,7 @@ Param PARAMS[] = {
   // Parameters from requete_SetReg_appli
   {"SeBa", 9, U16, 1800, 4500, 3000, 0, nullptr, &Seuil_batt_sonde, 0},  // registre 9 : seuil batterie sonde (mV)
   {"FrBL", 10, U8, 1, 15, 7, 0, nullptr, &Nb_jours_Batt_log, 0},         // registre 10 : nb jours log batterie
+  {"DeRap", 11, U8, 0, 3, 1, 0, nullptr, &boot_rapide, 0},          // registre 11 : boot rapide (0:lent 1:normal 2:rapide 3:très rapide(pas LogG-ota))
   {"Allu", 15, U8, 0, 1, 0, 0, nullptr, &pas_de_veille, 0},   // 0:veille 1:pas de mise en veille
   {"PVei", 16, U16, 15, 600, 30, 0, nullptr, &prolong_veille, 0}, 
           // registre 16 : duree allumage (s)
@@ -33,18 +34,17 @@ Param PARAMS[] = {
   {"lWc", 41, U8, 0, 13, 0, 0, nullptr, &last_wifi_channel, 0},         // registre 41 : last_wifi_channel (not persisted)
   {"WifiC", 42, U8, 1, 13, 1, 0, nullptr, &WIFI_CHANNEL, 0},         // registre 42 : canal wifi preferentiel (persisted)
 
-  // IP addresses stored as IPAddress objects
-  {"ipAdd", 50, IP, 0, 0xFFFFFFFFu, 0, 0, nullptr, &local_ip, 0},
-  {"ipGat", 51, IP, 0, 0xFFFFFFFFu, 0, 0, nullptr, &gateway, 0},
-  {"ipSub", 52, IP, 0, 0xFFFFFFFFu, 0, 0, nullptr, &subnet, 0},       // 255.255.255.0
-  {"ipDNS", 53, IP, 0, 0xFFFFFFFFu, 0, 0, nullptr, &primaryDNS, 0},   // 8.8.8.8
-  {"ipDNS2", 54, IP, 0, 0xFFFFFFFFu, 0, 0, nullptr, &secondaryDNS, 0},// 8.8.4.4
+  // IPv4 addresses stored as four bytes
+  {"ipAdd", 50, IP, 0, 0xFFFFFFFFu, 0, 0, nullptr, local_ip, 4},
+  {"ipGat", 51, IP, 0, 0xFFFFFFFFu, 0, 0, nullptr, gateway, 4},
+  {"ipSub", 52, IP, 0, 0xFFFFFFFFu, 0, 0, nullptr, subnet, 4},       // 255.255.255.0
+  {"ipDNS", 53, IP, 0, 0xFFFFFFFFu, 0, 0, nullptr, primaryDNS, 4},   // 8.8.8.8
+  {"ipDNS2", 54, IP, 0, 0xFFFFFFFFu, 0, 0, nullptr, secondaryDNS, 4},// 8.8.4.4
   {"Rout", 55, STR, 0, 0, 0, 0,  "rout", nom_routeur, 16},                // nom routeur  
   {"Mdp", 56, STR, 0, 0, 0, 0, "mdp", mdp_routeur, 16},                
   {"WSOn", 57, U8, 0, 2, 1, 0, nullptr, &websocket_on, 0},            // 0 ou 1
   {"WSock", 58, STR, 0, 0, 0, 0, "websocket", ip_websocket, 40},              // websocket adresse
-  {"WSId", 59, U8, 0, 9, 9, 0,nullptr, &id_websocket, 0},             // 1, 2, 3
-
+  {"WSId", 59, U8, 0, 9, 9, 0,nullptr, &id_websocket, 0}             // 1, 2, 3
 };
 
 // Provide number of entries for other translation units
