@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+#include <math.h>
 
 #include "variables.h"
 #include <WiFi.h>
@@ -15,6 +16,9 @@
 #include <DHT.h>
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
+
+#include "FS.h"
+#include "SD_MMC.h"
 
 extern WiFiClient client;
 extern Preferences preferences_nvs;  // Déclaration externe
@@ -31,10 +35,18 @@ RTC_NOINIT_ATTR uint8_t compteur_graph;
 RTC_NOINIT_ATTR uint16_t compteur_24h;
 
 S_Node Node[NB_CAPT];
+uint8_t Graph_capt[NB_Graphique];  // tableau de correspondance entre graphique et capteur
+uint8_t Graph_val[NB_Graphique];  // 0:pas de graphique, 1:temp 2:HR 3:HA 4:temp24 5:HR24, 6:HA24
 
-RTC_NOINIT_ATTR uint8_t mac_gw[6];   // B0:CB:D8:E9:0C:74  adresse mac esp_dest
 volatile uint8_t ackReceived = false;  // global pour indiquer que le peer a acké
 volatile int ackChannel = -1;       // canal où ça a marché
+
+float absoluteHumidity(float temperature, float relativeHumidity)
+{
+  return (13.247f * relativeHumidity / 100.0f *
+          exp((17.67f * temperature) / (temperature + 243.5f))) /
+         (273.15f + temperature);
+}
 
 void OnDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len);
 //void OnDataRecv(const uint8_t *mac, const uint8_t *data, int len);
@@ -103,6 +115,8 @@ void init_10_secondes()
 //setup au debut
 void setup_0()
 {
+
+    BTN_PIN[0] = PIN_REVEIL;  // Pins des boutons
 
   /*if (NB_Graphique==6)
   {
@@ -201,6 +215,7 @@ void setup_2()
 {
   #ifdef ESP_TJ_ACTIF
 
+
     if (boot_rapide < 3) readLastLogsG(99);
 
     // Configuration WiFi en mode Station pour ESP-NOW
@@ -233,7 +248,7 @@ void setup_2()
       Serial.println("\n\n======================================");
       Serial.println("🔵 ESP-NOW Initialisé (RÉCEPTEUR)");
       Serial.printf("   Canal WiFi: %d\n", current_channel);
-      delay(2000); // 2 secondes de pause pour lire
+      //delay(2000); // 2 secondes de pause pour lire
     }
     //if ((mode_reseau==13) )
     //else
@@ -251,12 +266,100 @@ void setup_2()
       Serial.printf("   Canal WiFi: %d\n", current_channel);
       Serial.println("   En attente de messages...");
       Serial.println("======================================\n\n");
-      delay(2000); // 2 secondes de pause pour lire
+      //delay(2000); // 2 secondes de pause pour lire
     }
   #endif
 }
 
+void enreg_24h(uint8_t)
+{
+}
 
+void setup_appli()
+{
+}
+
+void init_ram_variables_appli()
+{
+}
+
+char* requete_status_appli(char *json_response, char *p, uint8_t type)
+{
+  if (!type)  // pas d'envoi des graphiques si type=1(maj)
+  {
+    for (uint8_t i=0; i<NB_Graphique; i++) Graph_val[i] = 0;  // initialisation à 0
+    Graph_capt[0] = 'B';
+    Graph_val[0] = 1;
+    Graph_capt[1] = 'B';
+    Graph_val[1] = 2;
+
+    #ifdef Graph_Specifique
+      // Nota: les 0 sont sautés
+      uint8_t i,j;  // 10 car par valeur => 1000 car par graphique
+      for (j = 0; j < NB_Graphique; j++)
+      {
+        // valeurs de temperature
+        if (Graph_val[j])   // graphiques actifs
+        {
+          int16_t values[NB_Val_Graph];
+          uint8_t valueCount = 0;
+          // ouverture du fichier du capteur associé au graphique
+          String nomFichier;
+          if(Graph_val[j] > 3) nomFichier = "/capteurs/Capteur24h_" + String((char)Graph_capt[j]) + ".csv";
+          else nomFichier = "/capteurs/Capteur_" + String((char)Graph_capt[j]) + ".csv";
+
+          File file = SD_MMC.open(nomFichier, FILE_READ);
+          if (!file) {
+              Serial.println("Erreur ouverture fichier");
+              break; }
+
+          while (file.available())
+          {
+            String line = file.readStringUntil('\n');
+            line.trim();
+            float temperature;
+            float relativeHumidity;
+            if (sscanf(line.c_str(), "%*[^,],%*[^,],%f,%f",
+                       &temperature, &relativeHumidity) == 2)
+            {
+              float value;
+              if (Graph_val[j] == 1 || Graph_val[j] == 4)
+                value = temperature;
+              else if (Graph_val[j] == 2 || Graph_val[j] == 5)
+                value = relativeHumidity;
+              else
+                value = absoluteHumidity(temperature, relativeHumidity);
+
+              if (valueCount == NB_Val_Graph)
+                memmove(values, values + 1, (NB_Val_Graph - 1) * sizeof(values[0]));
+              else
+                valueCount++;
+              values[valueCount - 1] = (int16_t)round(value * 10.0f);
+            }
+          }
+
+          for (i = 0; i < valueCount; i++)
+          {
+            int16_t val = values[valueCount - 1 - i];
+            if (val)
+            {
+              int remaining = MAX_DUMP - (p - json_response) -2;
+              int n = snprintf(p, remaining, "\"T%d%d\":%i,", j, i, val);
+              if (n >= remaining || n < 0) {
+                break;
+              }
+              p+=n;
+            }
+          }
+          file.close();
+        }
+      }
+
+    #endif
+  }
+
+  return p;
+}
 
 void appli_event_on(systeme_eve_t evt)
 {
@@ -337,11 +440,6 @@ uint8_t requete_Get_String_appli(uint8_t type, String var, char *valeur)
   int paramV = var.toInt();
   // valeur limité a 50 caractères
   
-  if (paramV == 61)  // registre 61 : adresse MAC GW (ce module)
-  {
-    res = 0;
-    strncpy(valeur, WiFi.macAddress().c_str(), 18);
-  }
 
   return res;
 }
@@ -540,7 +638,6 @@ uint8_t fetch_internet_temp() {
           if (mil - last_remote_Text_time > 35*60*1000) // le precedent message est vieux de plus de 35 minutes
             err_Text++;
           last_remote_Text_time = mil;
-          cpt24_Text++;
           tempE_moy24h += Text;
         }
       } else {
@@ -624,15 +721,6 @@ uint8_t suppression_node(uint8_t node)
   // Supprime la dernière structure désormais en double.
   memset(&Node[total - 1], 0, sizeof(Node[0]));
 
-  // decale le tableau valT pour ce node
-  for (uint8_t j = index; j < total - 1; j++)
-  {
-    for (uint8_t i = 0; i < NB_Val_Graph; i++) {
-      for (uint8_t k = 0; k < 4; k++) {
-        valT[i][j][k] = valT[i][j + 1][k];
-      }
-    }
-  }  
   
   return 0;
 }
@@ -643,15 +731,19 @@ uint8_t conversion_node(uint8_t emetteur, uint8_t *node)
   for (uint8_t i = 0; i < NB_CAPT; i++) {
     if (Node[i].Add_node == emetteur) {
       *node = i;
+      Serial.printf("Node %c trouvé à l'index %d\n", emetteur, i);
       return 0; // Succès
     }
   }
   // verif s'il reste des places vides pour de nouveaux nodes
   for (uint8_t i = 0; i < NB_CAPT; i++) {
+    Serial.printf("add_node[%d] = %c\n", i, Node[i].Add_node);
     if (Node[i].Add_node == 0) { // place vide
       Node[i].Add_node = emetteur;
       *node = i;
-      return 0; // Succès
+      Node[i].nb_mess_recu = 0; // initialiser l'état du nœud
+      Node[i].actif = 1; 
+      return 2; // Succès
     }
   } 
   return 1; // Échec
@@ -673,22 +765,25 @@ uint8_t conversion_node(uint8_t emetteur, uint8_t *node)
 void OnDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
 //void OnDataRecv(const esp_now_peer_info_t * info, const uint8_t *incomingData, int len) {
   // 🔍 DIAGNOSTIC: Afficher infos de réception
-  Serial.println("\n📥 ========== RECEPTION ESP-NOW ==========");
-  for (int i = 0; i < 6; i++) {
-    Serial.printf("%02X", info->src_addr[i]);
-    if (i < 5) Serial.print(":");
+  if (log_detail>=2) 
+  {
+    Serial.println("\n📥 ========== RECEPTION ESP-NOW ==========");
+    for (int i = 0; i < 6; i++) {
+      Serial.printf("%02X", info->src_addr[i]);
+      if (i < 5) Serial.print(":");
+    }
+    Serial.println();
   }
-  Serial.println();
   
   // Afficher le canal WiFi actuel
   uint8_t current_channel;
   wifi_second_chan_t second;
   esp_wifi_get_channel(&current_channel, &second);
-  Serial.printf("   Canal WiFi actuel: %d\n", current_channel);
-  Serial.printf("   Taille reçue: %d octets\n", len);
+  if (log_detail>=3) Serial.printf("   Canal WiFi actuel: %d\n", current_channel);
+  if (log_detail>=3)Serial.printf("   Taille reçue: %d octets\n", len);
   
   if (len > sizeof(Message_EspNow)) {
-    Serial.println("⚠️ Taille de message trop ");
+    Serial.println("⚠️ message trop long");
     return;
   }
   Message_EspNow msg;
@@ -702,110 +797,99 @@ void OnDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
   {
     uint8_t node;
     uint8_t res_node = conversion_node(msg.emetteur, &node);
-    Serial.println("Message destiné au serveur");
+    if (res_node==2)    memcpy(Node[node].mac_node, info->src_addr, 6);
+
+    if (log_detail>=3) Serial.printf("Message destiné au serveur de %c node:%i\n", msg.emetteur, res_node);
     if (msg.code == 'C')
     {
-      Serial.println("Message de type Capteur");
+      if (log_detail>=3) Serial.println("Message de type Capteur");
       if (msg.code2 == 'T')
       {
-        Serial.println("   Sous-type Température");
+        if (log_detail>=3) Serial.println("   Sous-type Température");
         /* Structure payload : nb_val, periode en sec(2Bytes), (temp & hum)* Nb_valeurs(4Bytes)*/
         uint16_t pos = 0;
         uint8_t nb_valeurs = msg.payload[pos++];
-        uint16_t periode =  msg.payload[pos] | (msg.payload[pos + 1] << 8);
-        pos += 2;
-
-        if (!res_node && periode && periode <60 && nb_valeurs && nb_valeurs < MAX_TEMP)
+        if ((res_node!=1) && nb_valeurs && nb_valeurs<NB_VAL_TAB)
         {
-          // décalage de nb de valeurs
-          for (uint8_t i = NB_Val_Graph - 1; i >= nb_valeurs; i--) {
-            valT[i][node][0] = valT[i - nb_valeurs][node][0];  // temp
-            valT[i][node][1] = valT[i - nb_valeurs][node][1];  // hr
-          }
-          Serial.printf("   Période: %d min, Nombre de valeurs: %d\n", periode, nb_valeurs);
-          for (uint8_t i = 0; i < nb_valeurs; i++)
+          uint16_t Cap_temp[NB_VAL_TAB], Cap_hum[NB_VAL_TAB], Cap_ecart[NB_VAL_TAB];
+          uint16_t ecart_total=0;
+          for (uint8_t nb=0; nb<nb_valeurs; nb++)
           {
-            int16_t temp = msg.payload[pos] | (msg.payload[pos + 1] << 8);
-            valT[i][node][0] = temp;  // pour affichage en temps réel
-            pos += 2;
-
-            uint16_t hr = msg.payload[pos] | (msg.payload[pos + 1] << 8);
-            valT[i][node][1] = hr;  // pour affichage en temps réel
-            pos += 2;
-
-            Serial.printf( "T=%.1f  HR=%u\n", temp / 100.0 -10.0, hr/100.0);
+            Cap_temp[nb] = msg.payload[pos++] | (msg.payload[pos++] << 8);
+            Cap_hum[nb] = msg.payload[pos++] | (msg.payload[pos++] << 8);
+            Cap_ecart[nb] = msg.payload[pos++] | (msg.payload[pos++] << 8);
+            if (nb) ecart_total += Cap_ecart[nb];
           }
-      
-          /*File file = SD_MMC.open("/historique.csv", FILE_APPEND);
-
+          // timestamp actuel
+          time_t timestamp;
+          time(&timestamp);
+          // on retranche l'écart total(en minutes) pour retrouver le timestamp du premier message
+          timestamp -= ecart_total * 60;
+          // enregistrement sur la carte SD, dans le fichier du capteur concerné
+          String nomFichier = "/capteurs/Capteur_" + String((char)msg.emetteur) + ".csv";
+          File file = SD_MMC.open(nomFichier, FILE_APPEND);
           if (!file)
           {
               Serial.println("Erreur ouverture fichier");
               return;
           }
-
-          time_t timestamp;
-          time(&timestamp);
-          char buffer[25];
-
-          uint8_t nb_val = msg.nb_valeurs;
-          Serial.printf("✅ valeurs recues: %d°C\n", nb_val);
-
-          for (uint8_t i = 0; i < nb_val; i++)
+          // enregistrement du timestamp , de la temp et de l'humidité
+          for (uint8_t nb=0; nb<nb_valeurs; nb++)
           {
-            // formattage de la date/heure
-            struct tm timeinfo;
-            localtime_r(&timestamp, &timeinfo);
-
-            strftime(buffer,  sizeof(buffer), "%Y-%m-%d %H:%M:%S", &timeinfo);
-            String Stimestamp = String(buffer);
-
-              file.printf(
-                  "%s,%u,%u,%u,%u\n",
-                  Stimestamp.c_str(),
-                  msg.emetteur,
-                  msg.data[i].temp,
-                  msg.data[i].ha,
-                  msg.data[i].hr
-              );
-
-            // ajouter 15 minutes
-            timestamp += msg.periode * 60;
-
-            Serial.printf("   Valeur %d: %u\n", i+1, msg.data[i].temp);
+            char buffer[50];
+            struct tm * timeinfo = localtime(&timestamp);
+            strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", timeinfo);
+            file.printf("%s,%d,%.2f,%.2f\n", buffer, msg.emetteur, Cap_temp[nb]/100.0-40, Cap_hum[nb]/100.0);
+            Serial.printf("   %s,%d,%.2f,%.2f\n", buffer, msg.emetteur, Cap_temp[nb]/100.0-40, Cap_hum[nb]/100.0);
+            // incrémenter le timestamp pour le prochain message
+            if (nb < nb_valeurs - 1) timestamp += Cap_ecart[nb+1] * 60;
           }
           file.close();
-
-          Serial.println("Données sauvegardées");
-          }*/
         }
+        if (log_detail>=3) Serial.println("Données sauvegardées");
+      }
+      if (msg.code2 == 'I')  // lecture instantanée du capteur
+      {
+        if (log_detail>=2) Serial.println("   Temperature instantanee");
+        uint16_t Ctemp;
+        uint16_t Chum;
+        uint16_t CHA;
+        uint8_t pos=0;
+        Ctemp = msg.payload[pos++] | (msg.payload[pos++] << 8);
+        Chum = msg.payload[pos++] | (msg.payload[pos++] << 8);
+        CHA = msg.payload[pos++] | (msg.payload[pos++] << 8);
+        if (log_detail>=2) Serial.printf("   Capteur %d: Temp:%.2f Hum:%.2f HA:%.2f\n", msg.emetteur, Ctemp/100.0-40, Chum/100.0, CHA/100.0);
+        // Enregistrement sur la carte SD, dans le fichier des valeurs journalières
+        time_t timestamp;
+        time(&timestamp);
+
+        String nomFichier = "/capteurs/Capteur24h_" + String((char)msg.emetteur) + ".csv";
+        File file = SD_MMC.open(nomFichier, FILE_APPEND);
+        if (!file)
+        {
+            Serial.println("Erreur ouverture fichier");
+            return;
+        }
+        char buffer[50];
+        struct tm * timeinfo = localtime(&timestamp);
+        strftime(buffer, sizeof(buffer), "%Y-%m-%d %H", timeinfo);
+        file.printf("%s,%d,%.2f,%.2f,%.2f\n", buffer, msg.emetteur, Ctemp/100.0-40, Chum/100.0, CHA/100.0);
+        Serial.printf("   %s,%d,%.2f,%.2f,%.2f\n", buffer, msg.emetteur, Ctemp/100.0-40, Chum/100.0, CHA/100.0  );
+
+        file.close();
+
       }
       if (msg.code2 == 'J')
       {
-        Serial.println("   Sous-type 24h");
+        if (log_detail>=2) Serial.println("   Sous-type 24h");
 
         if (!res_node && len==9)
         {
-          // décalage de 1
-          for (uint8_t i = NB_Val_Graph - 1; i >= 1; i--) {
-            valT[i][node][2] = valT[i - 1][node][2];  // temp
-            valT[i][node][3] = valT[i - 1][node][3];  // hr
-          }
-          uint8_t pos=0;
-          int16_t temp = msg.payload[pos] | (msg.payload[pos + 1] << 8);
-          valT[0][node][2] = temp;  // pour affichage en temps réel
-          pos += 2;
-
-          uint16_t hr = msg.payload[pos] | (msg.payload[pos + 1] << 8);
-          valT[0][node][3] = hr;  // pour affichage en temps réel
-          pos += 2;
-
-          Serial.printf( "T=%.1f  HR=%u\n", temp / 10.0, hr/10.0);        
         }
       }
     }
     else if (msg.code == 'B') { // Batterie
-        Serial.printf(" Type de message batterie: code:%d\n", msg.code);
+        if (log_detail>=2) Serial.printf(" Type de message batterie: code:%d\n", msg.code);
       
 
       //Vbatt_Th = receivedMessage.value;

@@ -5,9 +5,7 @@ TODO :
 A compiler pour une firebeetle esp32-C6 ou uPesy vroom
 Avantages Platformio : Ifdef, intellisense, temps compil, backtrace
 
-v1.3 05/2026 board upesy, humidite absolue, envoi vers serveur
-v1.2 03/2026 Surveillance batterie, log 24h en eeprom, OTA à la demande
-v1.1 03/2026 copie de plat_esp_chad_gar v1.11 de 3/2026
+v1.1 08/2026 nouveau core
 
 Graphique 1 : par cycle : G1:temp_int(vert) G2:temp ext(bleu) G3:Nbdetect par cycle
 Graphique 2 : par 24h :   G1:Temp int(vert) G2:temp_ext(bleu) G3:Nb detect/24h
@@ -106,18 +104,13 @@ extern "C" {
   // #include "esp_rom/rtc.h"  // si tu le réactives
 }
 
-#include "esp_camera.h"
 #include <Wire.h>
 #include "esp_log.h"
 #include "esp_timer.h"
-#include "esp_camera.h"
-#include "img_converters.h"
-#include "fb_gfx.h"
+//#include "fb_gfx.h"
 #include "esp32-hal-ledc.h"
 #include "sdkconfig.h"
 #include "i2c.h"
-//#include "FS.h"
-//#include "SD_MMC.h"
 
 uint8_t err_wifi_repet;  // permet de resetter si le wifi ne se rétablit pas au bout de 4 jours
 uint16_t Seuil_batt_arret_ESP;  // millivolt
@@ -130,9 +123,8 @@ RTC_NOINIT_ATTR uint8_t action_envoi;
 uint8_t sdcard_ok;
 
 uint8_t init_masquage=1;
-RTC_NOINIT_ATTR uint8_t cpt24h_batt;
 
-uint8_t envoi_data_gateway(Message_EspNow mess_esp, uint16_t taille);
+uint8_t envoi_data_gateway(Message_EspNow mess_esp);
 uint8_t parseMacString(const char* str, uint8_t mac[6]);
 
 // variable globale de 4000c en RAM pour dump log et autres requetes
@@ -207,13 +199,14 @@ RTC_NOINIT_ATTR uint8_t mode_reseau=13;  //  0:pas de reseau 11:wifi_AP_usine  1
 
 RTC_NOINIT_ATTR char nom_routeur[16]="";
 RTC_NOINIT_ATTR char mdp_routeur[16]="";
+RTC_NOINIT_ATTR char mac_gw_str[20]=""; // 34:34:23:23:23:12
 RTC_NOINIT_ATTR char latitude[16]="";
 RTC_NOINIT_ATTR char longitude[16]="";
+RTC_NOINIT_ATTR uint8_t mac_gw[6];   // B0:CB:D8:E9:0C:74  adresse mac esp_dest
 
 unsigned long last_remote_Tint_time = 0, last_remote_Text_time=0, last_remote_heure_time=0;
 
-int16_t  valT [NB_Val_Graph][NB_CAPT][4];
-RTC_NOINIT_ATTR int16_t  graphique [NB_Val_Graph][10];
+RTC_NOINIT_ATTR int16_t  graphique [NB_Val_Graph][NB_Graphique];
 
 // Status
 RTC_NOINIT_ATTR uint32_t rtc_magic = 0xDEADBEEF;
@@ -223,7 +216,6 @@ RTC_NOINIT_ATTR uint16_t cpt_cycle_batt; // Compteur cycles pour mesure batterie
 uint16_t erreur_queue=0;
 uint8_t num_err_queue[5];
 uint8_t cpt_init=0;
-RTC_NOINIT_ATTR uint8_t etat_ESP_stop;  // 0:normal 1:arrêté pour batterie faible (deepsleep longue duree)
 
 // websocket
 RTC_NOINIT_ATTR uint8_t websocket_on=0;     // 1:off 2:on
@@ -235,8 +227,8 @@ bool isWebSocketConnected = false;
 RTC_NOINIT_ATTR uint8_t DelaiWebsocket = 1;
 uint16_t cpt_ws_timeout=0, cpt_ws_ping=0;
 
-volatile bool force_stay_awake = false; // Flag pour rester éveillé après appui bouton
-uint8_t type_reveil;  //0:pas de reveil 1: réveil par timer, 2: réveil par bouton_reveil 3:reveil par PIR
+bool force_stay_awake = false; // Flag pour rester éveillé après appui bouton
+uint8_t type_reveil;  //0:power on 1: réveil par timer, 2: réveil par PIR 3:inconnu 4:reveil par BTN 10:actif
 unsigned long wake_up_time = 0; // Temps de réveil
 
 //x seconds Watchdog 
@@ -348,7 +340,7 @@ AsyncWebServer server(80);
 
 uint8_t cycle24h;
 RTC_NOINIT_ATTR float  tempI_moy24h=0, tempE_moy24h=0, Hum_24h=0, HA_moy24h=0;
-RTC_NOINIT_ATTR uint8_t cpt24_Tint=0, cpt24_Text=0,  cpt24_Hum=0, cpt24_HA=0;
+RTC_NOINIT_ATTR uint16_t cpt24_Tint=0, cpt24_Text=0,  cpt24_Hum=0, cpt24_HA=0;
 RTC_NOINIT_ATTR uint16_t TextV=0, TintV=0, HumV=0, HAV=0;  // pour stockage dans la partition log_flashG
 
 // OTA
@@ -360,12 +352,10 @@ unsigned long otaStartTime = 0;
 volatile unsigned long lastInterruptTime = 0; 
 
 TimerHandle_t debounceTimer;
-#define BTN_COUNT 1  // Nombre de boutons
-volatile int lastButtonState[BTN_COUNT] = {HIGH};  // États précédents
-volatile int stableButtonState[BTN_COUNT] = {HIGH}; // États stables validés
-int pressCounter[BTN_COUNT] = {0}; // Compteurs de validation
-
-const int BTN_PIN[BTN_COUNT] = {14};  // Pins des boutons
+volatile int lastButtonState[BTN_COUNT];  // États précédents
+volatile int stableButtonState[BTN_COUNT]; // États stables validés
+int pressCounter[BTN_COUNT]; // Compteurs de validation
+int BTN_PIN[BTN_COUNT];  // Pins des boutons
 
 
 #define configASSERT_CODE( x, code ) if( ( x ) == 0 ) { \
@@ -375,7 +365,7 @@ const int BTN_PIN[BTN_COUNT] = {14};  // Pins des boutons
     Serial.println(code);                               \
     while(1) { }                                         \
 }
-// utiliser comme cela : configASSERT_CODE(ptr != NULL, 3);   // code 3 = pointeur NULL
+// A utiliser comme cela : configASSERT_CODE(ptr != NULL, 3);   // code 3 = pointeur NULL
 
 uint8_t resetReason0;
 esp_sleep_wakeup_cause_t source_reveil;
@@ -429,7 +419,7 @@ void connectWebSocket();
 void printMemoryStatus();
 void checkPartitions();
 int readLastLogsBinary(uint8_t *buffer, int nombre);
-void requete_status(char *json_response, uint8_t socket, uint32_t type);
+void requete_status(char *json_response, uint8_t socket, uint8_t type);
 uint8_t requete_Set(uint8_t type, const char* param, const char* valStr);
 uint8_t requete_Get(uint8_t type, const char* var, float *valeur);
 uint8_t requete_Get_String (uint8_t type, String var, char *valeur);
@@ -439,10 +429,11 @@ uint8_t requete_Set_String(int param, const char *texte);
 uint8_t requete_Set_Action(const char *reg, const char *data);
 uint16_t trouve_index (uint8_t page);
 uint8_t requete_GetReg(int reg, float *valeur);
-void writeLogG(uint8_t code, uint16_t c1, uint16_t c2, uint16_t c3);
 uint16_t trouve_indexG (uint8_t page);
-
-
+char* requete_status_appli(char *json_response, char *p, uint8_t type);
+void init_ram_variables_appli();
+uint8_t connectWiFiRapide();
+void setup_appli();
 
 
 
@@ -597,7 +588,10 @@ void vTimerWatchdogCallback(TimerHandle_t xTimer)
 
 // timer debounce pour lire toutes les entrées
 void IRAM_ATTR onButtonInterrupt() {
-    xTimerStartFromISR(debounceTimer, NULL);  // Un seul timer pour tous les boutons
+    // The GPIO interrupt can occur before the rest of setup has completed.
+    if (debounceTimer != NULL) {
+      xTimerStartFromISR(debounceTimer, NULL);  // Un seul timer pour tous les boutons
+    }
 }
 
 
@@ -717,94 +711,14 @@ void uart1Task(void * parameter) {
   }
 }
 
-// log batterie et Temp moyenne toutes les 24h.
-void enreg_24h( uint8_t veille)
+uint16_t selec_graph(uint8_t code, uint16_t ha, uint16_t hum,  uint16_t pir)
 {
-    // Log toutes les jours/semaines : nb d'erreurs wifi et batteries
-  if (Nb_jours_Batt_log)
-  {
-    float vbatt = readBatteryVoltage();
-    Serial.printf("Tension Batterie : %.2f V\n", vbatt);
-
-    if ((Seuil_batt_arret_ESP) && (vbatt < Seuil_batt_arret_ESP) && (vbatt > 2400))
-    {
-      writeLog('S', 7, 0, 0, "Batt Stp");
-      etat_ESP_stop = 1;
-    }
-    cpt24h_batt++;
-    if (cpt24h_batt >= Nb_jours_Batt_log)  // log chaque X jour 
-    {
-      cpt24h_batt=0;
-
-      //Serial.printf("Tension Batterie 24h : %.2f %.2f V\n", vbatt, Vbatt_Th);
-      if (veille)
-      {
-        writeLog('K', (uint8_t)((vbatt-2.0)*100), 0, 0, "24H_Res");
-      }
-      else
-      {
-        if (nb_err_reseau>255) nb_err_reseau=255;
-        writeLog('K', (uint8_t)((vbatt-2.0)*100), 0, (uint8_t)nb_err_reseau, "24H_Res");
-        nb_err_reseau=0;
-      }
-    }
-  }
-
-  // erreurs Tint, Text, heure
-  if (err_Tint>254) err_Tint=255;
-  if (err_Tint)
-            log_erreur(Code_erreur_Tint, err_Tint,0);
-  if (err_Text>254) err_Text=255;
-  if (err_Text)
-            log_erreur(Code_erreur_Text, err_Text,0);
-  if (err_Heure>254) err_Heure=255;
-  if (err_Heure)
-            log_erreur(Code_erreur_Heure, err_Heure,0);
-  err_Tint=0;
-  err_Text=0;
-  err_Heure=0;
-
-  // graphique des temperatures quotidiennes
-  uint16_t tempI=1, tempE=1, Hum=1, HA=1;
-  if (cpt24_Tint)  tempI = (uint16_t)(tempI_moy24h/cpt24_Tint*10);
-  if (cpt24_Text)  tempE = (uint16_t)(tempE_moy24h/cpt24_Text*10);
-  if (cpt24_Hum) Hum = (uint16_t)(Hum_24h/cpt24_Hum*10);
-  if (cpt24_HA) HA = (uint16_t)(HA_moy24h/cpt24_HA*10);
-  if (!tempI) tempI=1;  // permet d'afficher quand meme le point sur le graphique
-  if (!tempE) tempE=1;  // permet d'afficher quand meme le point sur le graphique
-  if (!Hum) Hum=1;  // permet d'afficher quand meme le point sur le graphique
-  if (!HA) HA=1;  // permet d'afficher quand meme le point sur le graphique
-  TextV = tempE;
-  TintV = tempI;
-  HumV = Hum;
-  HAV = HA;
-
-  //Serial.printf("Temp24h I:%.2f %i E:%.2f %i C:%.2f %i\n\r", tempI_moy24h, cpt24_Tint, tempE_moy24h, cpt24_Text, cout_moy24h, cpt24_Cout);
-
-  tempI_moy24h=0;
-  tempE_moy24h=0;
-  Hum_24h=0;
-  HA_moy24h=0;
-  cpt24_Tint=0;
-  cpt24_Text=0;
-  cpt24_Hum=0;
-  cpt24_HA=0;
-
-  uint8_t i;
-  for (i = NB_Val_Graph - 1; i; i--) {
-    graphique[i][3] = graphique[i - 1][3];
-    graphique[i][4] = graphique[i - 1][4];
-    graphique[i][5] = graphique[i - 1][5];
-  }
-  graphique[0][3] = tempI;
-  graphique[0][4] = HA;
-  graphique[0][5] = Hum;  
-
-  Serial.printf("Graphique 24h : Tint:%i Text:%i Hum:%i HA:%i\n\r", tempI, tempE, Hum, HA);
-  writeLogG('G', tempI, HA, Hum); // Enregistrment en Flash des 3 valeurs du graphique
-
-
+  if (code==0) return ha;
+  else if (code==1) return hum;
+  else return pir;
 }
+
+
 
 void taskHandler(void *parameter) {
     systeme_eve_t evt;
@@ -861,8 +775,8 @@ void taskHandler(void *parameter) {
                     #endif
 
                     if (force_stay_awake) {
-                        wake_up_time = millis() + 50000; // Prolonger sur réception  message UART
-                        Serial.println("Activité UART détectée : prolongation du délai de 30s.");
+                        wake_up_time = millis() + prolong_veille*1000; // Prolonger sur réception  message UART
+                        Serial.printf("Activité UART détectée : prolongation du délai de %is.\n", prolong_veille);
                     }
                     
                     UartMessage_t uartMsg;
@@ -897,7 +811,7 @@ void taskHandler(void *parameter) {
                     appli_event_off(evt);
                     break;
 
-                case EVENT_GPIO_ON:  // 0:reprise secteur, 1:fin intrusion, 2:autoprotect, 3:marche/arret
+                case EVENT_GPIO_ON:  // 0:BTN0 1:BTN1
                     Serial.printf("GPIO:on:%i\n\r", evt.data);
                     appli_event_on(evt);
                     break;
@@ -1069,13 +983,20 @@ void init_rtc_variables()
 
 void init_ram_variables()
 {
-  cpt24h_batt=6;   // pour esp_chaudiere (chaque jour)
   err_Tint=0;
   err_Text=0;
   err_Heure=0;
   nb_err_reseau=0;
   Tint=20.0;
   Text=10.0;
+  for (uint8_t i=0; i<NB_Graphique; i++)
+  {
+    for (uint8_t j=0; j<NB_Val_Graph; j++)
+    {
+      graphique[j][i]=0;
+    }
+  }
+  init_ram_variables_appli();
 }
 
 static IPAddress makeIPAddress(const uint8_t address[4])
@@ -1102,6 +1023,59 @@ static IPAddress defaultIPAddressForKey(const char* key)
     if (strcmp(key, "ipDNS2") == 0) return SsecondaryDNS;
   #endif
   return IPAddress(0, 0, 0, 0);
+}
+
+// verification que les paramètres sont compris dans la plage, sinon, valeur par défaut
+uint8_t verif_read(Param &p)
+{
+  switch (p.type) {
+    case U8: {
+      uint8_t v = *(uint8_t*)p.var;
+      if (v < p.min16 || v > p.max16) {
+        *(uint8_t*)p.var = (uint8_t)p.def_u16;
+        Serial.printf("****RAZ parametre %s : defaut %u\n", p.key, *(uint8_t*)p.var);
+        return 1;
+      }
+      return 0;
+    }
+
+    case U16: {
+      uint16_t v = *(uint16_t*)p.var;
+      if (v < p.min16 || v > p.max16) {
+        *(uint16_t*)p.var = (uint16_t)p.def_u16;
+        Serial.printf("****RAZ parametre %s : defaut %u\n", p.key, *(uint16_t*)p.var);
+        return 1;
+      }
+      return 0;
+    }
+
+    case IP: {
+      uint32_t v = *((uint32_t*)p.var);
+      if (v < p.min16 || v > p.max16) {
+        IPAddress ip = defaultIPAddressForKey(p.key);
+        storeIPAddress((uint8_t*)p.var, ip);
+        Serial.printf("****RAZ parametre %s : defaut %s\n", p.key, ip.toString().c_str());
+        return 1;
+      }
+      return 0;
+    }
+
+    case STR: {
+      char* ptr = (char*)p.var;
+      if (strlen(ptr) == 0 || strlen(ptr) >= p.size) {
+        strncpy(ptr, p.def_str, p.size - 1);
+        ptr[p.size - 1] = '\0';
+        Serial.printf("****RAZ parametre %s : defaut %s\n", p.key, ptr);
+        return 1;
+      }
+      return 0;
+    }
+
+    default:
+      break; 
+  }
+
+  return 1; // Type inconnu
 }
 
 
@@ -1279,14 +1253,18 @@ void i2cBootRecovery() {
 
 void setup()
 {
-  
+  if (boot_rapide > 3) boot_rapide=0;
+  if (log_detail > 4) log_detail=4;
+
+  uint32_t t = millis();
   if (boot_rapide < 2) delay(3000);
+
 
   // Cause reset :
   resetReason0 = (uint8_t) esp_reset_reason();
   Serial.begin(115200);
   
-  Serial.printf("milli A: %lu  boot_rapide:%i log_detail:%i\n", millis(), boot_rapide, log_detail);
+  if (log_detail>=2) Serial.printf("milli A: %lu  boot_rapide:%i log_detail:%i\n", t, boot_rapide, log_detail);  // 39ms
 
 
   // Cause réveil du deep/light_sleep (undefined si pas de reveil deep/light sleep)
@@ -1300,7 +1278,7 @@ void setup()
       type_reveil=4; ext1:BTN = nvs complet, demarrage reseau, 1 min.
       rtc & type_reveil=2; ext1:PIR = pas de nvs. si stockage flash => partition logèflash
       rtc & type_reveil=3(inconnu) => lecture_temp
-      type_reveil=5; tj_actif
+      type_reveil=10 = tj_actif
       */
   if (wakeup_reason)
   {
@@ -1313,18 +1291,18 @@ void setup()
     {
       reveil = 4;
       uint64_t wakeup_pins = esp_sleep_get_ext1_wakeup_status();
-      Serial.printf("wakeup_pins: %016llX\n", wakeup_pins);
+      if (log_detail>=3) Serial.printf("wakeup_pins: %016llX\n", wakeup_pins);
       if (wakeup_pins & (1ULL << PIN_REVEIL)) {
-          Serial.println("Réveil par PIN1");
+          if (log_detail>=3) Serial.println("Réveil par PIN1");
+          force_stay_awake = true; // Réveil par bouton Reveil : on reste éveillé pour l'UART
+          wake_up_time = millis() + prolong_veille*1000; // Prolonger si Bouton réveil est appuyé
+          if (log_detail>=3) Serial.printf("\n*** RÉVEIL PAR BOUTON : Mode configuration UART actif pour %is ***\n", prolong_veille);
       }
 
       if (wakeup_pins & (1ULL << PIN_REVEIL2)) {
-          Serial.println("Réveil par PIN2");
+          Serial.println("Réveil par PIN2-PIR");  // PIR
+          reveil = 2;
       }
-
-      force_stay_awake = true; // Réveil par bouton Reveil : on reste éveillé pour l'UART
-      wake_up_time = millis() + 30000; // Prolonger si Bouton réveil est appuyé
-      Serial.println("\n*** RÉVEIL PAR BOUTON : Mode configuration UART actif pour 30s ***");
     }
   }
   else
@@ -1333,11 +1311,11 @@ void setup()
       wake_up_time = millis() + 50000;
   }
 
-
   strncpy(resetREASON0, verbose_reset_reason(resetReason0), sizeof(resetREASON0) - 1);
   resetREASON0[sizeof(resetREASON0) - 1] = '\0'; // Garantit la terminaison null
 
   // determination si la RTC reste valide (apres un reveil deepsleep)
+  //Serial.printf("rtc_magic: %08X\n", rtc_magic);
   if (rtc_magic != 0x05343211 )  
   {
     // RTC non valide = cold reset
@@ -1352,7 +1330,6 @@ void setup()
   }
   init_ram_variables(); // RTC conservé. initialisation de la ram normale (aléatoire)
 
-
   /* autre (Type_reveil=0, pas rtc): poweron => chargement nvs_rtc, puis comme timer
       rtc & type_reveil=1; timer  => pas de nvs, lecture temp. si stockage ram =>rien
                                     si envoi => réseau
@@ -1360,18 +1337,18 @@ void setup()
       type_reveil=4; ext1:BTN = nvs complet, demarrage reseau, 1 min.
       rtc & type_reveil=2; ext1:PIR = pas de nvs. si stockage flash => partition logèflash
       rtc & type_reveil=3(inconnu) => lecture_temp
-      type_reveil=5; tj_actif
+      type_reveil=10; tj_actif
       */
-  type_reveil=0;       // power_on pour veille
+  type_reveil=0;       // power_on 
   if (reveil==4)  type_reveil=4;  //BTN
   else if (rtc_valid)
   {
-    if (reveil==1) type_reveil=1; // Timer
+    if (reveil==1) type_reveil=1; // Timer 15 min
     else if (reveil==2) type_reveil=2; // PIR
-    else type_reveil=3;           // inconnu
+    else type_reveil=3;           // inconnu-watchdog-Exception
   }
   #ifdef ESP_TJ_ACTIF
-    type_reveil = 5;  // power on, toujours actif
+    type_reveil = 10;  // power on, toujours actif
   #endif
 
   // Optimisation processeur : autorise le processeur à s'arrêter si inactif
@@ -1430,13 +1407,33 @@ void setup()
     cpt_securite = 10;
   #endif
 
+  if (log_detail>=3) Serial.printf("milli E: %lu\n", millis());
 
-  Serial.printf("**** Initialisation - reset: %s  type_rev:%i Sleep:%i rtc:%i\n\r",resetREASON0, type_reveil, wakeup_reason, rtc_valid );
-  setup_0();   //  --- valeur initiales des graphiques
+  if (log_detail>=2) Serial.printf("**** Initialisation - reset: %s  type_rev:%i Sleep:%i rtc:%i\n\r",resetREASON0, type_reveil, wakeup_reason, rtc_valid );
 
-    Serial.printf("milli D: %lu\n", millis());
+  
+  setup_0();   //  --- valeur initiales des PIN et graphiques
 
-  if (type_reveil>=4) // bouton ou toujours actif
+  // ---------  Configuration des PIN Entrees/sorties       -------------------------------
+
+  // Create this timer before attaching the GPIO interrupts. A GPIO transition
+  // during setup must not submit a command with a null timer handle.
+  debounceTimer = xTimerCreate("debounce", pdMS_TO_TICKS(DEBOUNCE_INTERVAL), pdFALSE, 0, debounceCallback);
+  if (debounceTimer == NULL)  Serial.println("Erreur : timer debounceTimer non créé !");
+
+
+
+  for (uint8_t i=0; i<BTN_COUNT; i++)
+  {
+    lastButtonState[i] = HIGH;  // États précédents
+    stableButtonState[i] = HIGH; // États stables validés
+    pressCounter[i] = 0; // Compteurs de validation
+    pinMode(BTN_PIN[i], INPUT_PULLUP);  // Configurer les boutons en entrée avec pull-up interne
+    attachInterrupt(digitalPinToInterrupt(BTN_PIN[i]), onButtonInterrupt, CHANGE);  // Déclencher l'interruption sur changement d'état
+  }
+
+
+  //if (type_reveil>=4) // bouton ou toujours actif
   {
     // ---------  Creation des taches et des queues -------------------
 
@@ -1456,25 +1453,6 @@ void setup()
       QueueUart1 = xQueueCreate(20, sizeof(UartMessage_t));
       xTaskCreate(uart1Task, "UART1Task", 8192, NULL, 3, NULL);  // priorité 3 plus élevée
     #endif
-
-    // ------  Configuration des PIN sorties       -------------------------------
-
-    pinMode(PIN_OUT0, OUTPUT);
-    // Configurer l'interruption GPIO sur GPIO 18 (ex: bouton poussoir)
-    //pinMode(18, INPUT_PULLUP);
-    //attachInterrupt(digitalPinToInterrupt(18), onGPIO, FALLING);
-      pinMode(BTN_PIN[0], INPUT_PULLUP);
-      pinMode(BTN_PIN[1], INPUT_PULLUP);
-      /*pinMode(BTN_PIN[1], INPUT_PULLUP);
-      pinMode(BTN_PIN[2], INPUT_PULLUP);
-      pinMode(BTN_PIN[3], INPUT_PULLUP);
-      pinMode(BTN_PIN[4], INPUT_PULLUP);*/
-      for (int i = 0; i < BTN_COUNT; i++) {
-          attachInterrupt(digitalPinToInterrupt(BTN_PIN[i]), onButtonInterrupt, CHANGE);
-      }
-      //pinMode(PIN_REVEIL, INPUT_PULLDOWN); // Bouton de réveil / Wifi_AP au démarrage
-      //pinMode(PIN_REVEIL2, INPUT_PULLDOWN); // Bouton de réveil : Detecteur
-
 
 
     // ------   Initialisation MODBUS       --------------
@@ -1507,66 +1485,78 @@ void setup()
     #endif
   }
 
-
   // ------  NVS Eeprom  ---------------------
-    preferences_nvs.begin("NVS_App", false);
 
-  if ((type_reveil>=4) || (!type_reveil))
+  // lecture nvs : 9 millisecondes pour 37 paramètres
+  preferences_nvs.begin("NVS_App", false);
+
+  // incrémentation nb de reset en nvs
+  nb_reset = preferences_nvs.getUShort("nb_reset", 0);
+  nb_reset++;
+  preferences_nvs.putUShort("nb_reset", nb_reset);
+
+
+  if (!rtc_valid) // si rtc non valide (cold reset) => lecture de tous les paramètres nvs
   {
-
-
-    if (type_reveil>=4)
-    {
-      // lecture nb de reset en nvs
-      nb_reset = preferences_nvs.getUShort("nb_reset", 0);
-      nb_reset++;
-      preferences_nvs.putUShort("nb_reset", nb_reset);
-
-      if (!rtc_valid) // si rtc non valide (cold reset) => lecture de tous les paramètres nvs
+    if (log_detail>=4) Serial.printf("NVS : nb de parametres : %d\n\r", PARAMS_COUNT);
+    // lecture de tous les paramètres nvs uint8_t, uint16_t, uint32_t(IP) et string
+    for (size_t i = 0; i < PARAMS_COUNT; ++i) {
+      nvs_read(PARAMS[i]);
+      if (i==1)  // log_detail
       {
-        if (log_detail>=4) Serial.printf("NVS : nb de parametres : %d\n\r", PARAMS_COUNT);
-        // lecture de tous les paramètres nvs uint8_t, uint16_t, uint32_t(IP) et string
-        for (size_t i = 0; i < PARAMS_COUNT; ++i) {
-          nvs_read(PARAMS[i]);
-          if (i==1)  // log_detail
-          {
-              apply_log_detail(log_detail);
-              Serial.printf("log_detail:%i\n\r", log_detail);
-          }
-
+          apply_log_detail(log_detail);
+          Serial.printf("log_detail:%i\n\r", log_detail);
+      }
+      if (i==61) // adresse Mac Gateway
+      {
+        if (!parseMacString(mac_gw_str, mac_gw))
+        {
+            Serial.println("MAC Serveur invalide");
         }
+
       }
+    }
+    log_detail=4;
+    apply_log_detail(log_detail);
+  }
+  else  // vérification de cohérence des parametres nvs
+  {
+    for (size_t i = 0; i < PARAMS_COUNT; ++i) {
+      verif_read(PARAMS[i]);      
+    }
+  }
 
 
-      #ifdef NO_RESEAU
-        mode_reseau=0;
-      #endif
+  #ifdef NO_RESEAU
+    mode_reseau=0;
+  #endif
+
+  uint8_t err_ip=0;
+  if (!nom_routeur[0]) {
+    err_ip=1;
+    Serial.println("pas de routeur");
+  }
+
+  if ((!local_ip[0]) || (!gateway[0]))  err_ip=1;
+  if ((!subnet[0]) || (!primaryDNS[0]) || (!secondaryDNS[0]))  err_ip=1;
+
+  if (err_ip) { 
+    mode_reseau=11;  // si une info manquante => activation en Access_point
+    Serial.printf("Err=>activ access point %d %d %d %d %d\n\r", local_ip[0], gateway[0], subnet[0], primaryDNS[0], secondaryDNS[0]);
+  }
+  #ifdef Wifi_AP
+    mode_reseau=11;
+  #endif
 
 
-      uint8_t err_ip=0;
-
-      if (!nom_routeur[0]) {
-        err_ip=1;
-        Serial.println("pas de routeur");
-      }
-
-      if ((!local_ip[0]) || (!gateway[0]))  err_ip=1;
-      if ((!subnet[0]) || (!primaryDNS[0]) || (!secondaryDNS[0]))  err_ip=1;
-
-      if (err_ip) { 
-        mode_reseau=11;  // si une info manquante => activation en Access_point
-        Serial.printf("Err=>activ access point %d %d %d %d %d\n\r", local_ip[0], gateway[0], subnet[0], primaryDNS[0], secondaryDNS[0]);
-      }
-      #ifdef Wifi_AP
-        mode_reseau=11;
-      #endif
-
-
-
+  if ((type_reveil>=3) || (!type_reveil))
+  {
+    if (type_reveil>=3)
+    {
     }
 
     // lecture du Bouton BTN0 : si actif pendant 1 secondes => Wifi_AP
-    int buttonState = digitalRead(BTN_PIN[0]);
+    /*int buttonState = digitalRead(BTN_PIN[0]);
     if (!buttonState)
     {
       delay(1000);
@@ -1577,15 +1567,17 @@ void setup()
         Serial.println("Appui BTN0 => Wifi_AP");
         mode_reseau=11;
       }
-    }
+    }*/
   }
+  if (log_detail>=3) Serial.printf("milli F: %lu\n", millis());
 
-  if (log_detail>=4) Serial.printf("milli F: %lu\n", millis());
+  setup_1();  // --------------   initialisation sonde temperature--10ms----------
 
-  setup_1();  // --------------   initialisation sonde temperature------------
+   if (log_detail>=3) Serial.printf("milli G: %lu\n", millis());
 
-  if (log_detail>=2) Serial.printf("milli G: %lu\n", millis());
+   setup_appli();
 
+   if (log_detail>=3) Serial.printf("milli G2: %lu\n", millis());
 
   // -------------- partition "log_flash" custom  pour Write-log -------------------
 
@@ -1606,6 +1598,7 @@ void setup()
     }
 
     writeLog('R', resetReason0, rtc_valid, wakeup_reason, "Reset");
+
     if (boot_rapide < 2) delay(500);
 
     if (log_detail>=4) 
@@ -1627,12 +1620,11 @@ void setup()
     log_errG=0;
     if (log_detail>=4) Serial.println("Partition 'log_flash_G' trouvée.");
   }
-
   if (log_detail>=2) Serial.printf("milli H: %lu\n", millis());
 
   // -------------   Configuration des timers FreeRTOS (max 49 jours)   --------------------
 
-  // Timer à l'initialisation pour masquer 10 secondes les envois au transmetteur et init heure, puis 30 sec
+  // Timer à l'initialisation pour masquer 10 secondes  init heure, puis 30 sec
   xTimer_Init= xTimerCreate ("Init", (uint32_t)attente_init*(1000/portTICK_PERIOD_MS), pdTRUE, (void *) 0, vTimerInitCallback);
   if (xTimer_Init == NULL)  Serial.println("Erreur : timer xTimer_Init non créé !");
 
@@ -1644,11 +1636,6 @@ void setup()
   xTimer_24H= xTimerCreate ("24H", (uint32_t)24*60*60*(1000/portTICK_PERIOD_MS), pdTRUE, (void *) 0, vTimer24HCallback);
   if (xTimer_24H == NULL)  Serial.println("Erreur : timer xTimer_24h non créé !");
 
-  // Timer pour éviter les faux rebonds des boutons
-  debounceTimer = xTimerCreate("debounce", pdMS_TO_TICKS(DEBOUNCE_INTERVAL), pdFALSE, 0, debounceCallback);
-  if (debounceTimer == NULL)  Serial.println("Erreur : timer debounceTimer non créé !");
-
-  //xTimerStart(debounceTimer, 100);  // lecture initiale pour lire l'état des boutons
 
 
   // Timer cycle : lecture temp exterieur par internet
@@ -1680,8 +1667,6 @@ void setup()
   #endif
 
   if (log_detail>=2) Serial.printf("milli I: %lu\n", millis());
-
-  //delay(1000); // Attente 4 sec pour que les boutons se stabilisent
 
   xTimerStart(xTimer_Init,100);
   xTimerStart(xTimer_24H,100);
@@ -1799,8 +1784,6 @@ void setup()
     Serial.println(ETH.localIP());
 
   #endif // wifi
-
-  if (log_detail>=2) Serial.printf("milli K: %lu\n", millis());
 
   // Configuration du serveur NTP
     configTzTime("CET-1CEST,M3.5.0/2,M10.5.0/3", ntpServer);
@@ -2222,7 +2205,7 @@ void onMessageCallback(WebsocketsMessage message) {
 
   else if (!strncmp(action, "status",7)) {
     printMemoryStatus();
-    uint32_t type = doc["type"];
+    uint8_t type = doc["type"];
     if (type) type = 1; else type = 0;
 
     requete_status(buffer_dmp, 1, type);
@@ -2520,6 +2503,21 @@ uint8_t requete_Get_String (uint8_t type, String var, char *valeur)
     if (!res) break; // found and filled
   }
 
+  if (paramV == 60)  // registre 60 : adresse MAC GW (ce module)
+  {
+    res = 0;
+    strncpy(valeur, WiFi.macAddress().c_str(), 18);
+    Serial.printf("MAC GW ce module: %s\n", valeur);
+  }
+  if (paramV == 61)  // registre 61 : adresse MAC Gateway
+  {
+    res = 0;
+    snprintf(valeur, 18,
+           "%02X:%02X:%02X:%02X:%02X:%02X",
+           mac_gw[0], mac_gw[1], mac_gw[2],
+           mac_gw[3], mac_gw[4], mac_gw[5]);
+  }
+
   res2 = requete_Get_String_appli(type, var, valeur);
 
 
@@ -2615,8 +2613,28 @@ uint8_t requete_Set_Action(const char *reg, const char *data)
       }*/
     }
 
-    // plantage CPU
+    
+    // redémarrage soft avec rtc=0
+    if (strcmp(reg, "RST0") == 0) 
+    { 
+      res=0; 
+      writeLog('S', 9, 0, 0, "Boot S");
+      delay(1000);
+      rtc_magic = 0x08843211;
+      esp_restart();  // Redémarrage logiciel en redemarrant la RTC RAM
+    }
+
+    // redémarrage soft avec rtc=1
     if (strcmp(reg, "RST1") == 0) 
+    { 
+      res=0; 
+      writeLog('S', 9, 0, 0, "Boot S");
+      delay(1000);
+      esp_restart();  // Redémarrage logiciel sans effacer la RTC RAM
+    }
+
+    // plantage CPU
+    if (strcmp(reg, "RST2") == 0) 
     { 
       res=0; 
       uint8_t var1=0;
@@ -2628,14 +2646,15 @@ uint8_t requete_Set_Action(const char *reg, const char *data)
       uint8_t var2 = 58 / var1; // provoque un crash
       *ptr = 42+var2;  // provoque aussi un crash
     }
-    
-    // redémarrage soft
-    if (strcmp(reg, "RST0") == 0) 
+
+    // passage veille profonde deepsleep
+    if (strcmp(reg, "VEI") == 0) 
     { 
       res=0; 
-      writeLog('S', 9, 0, 0, "Boot S");
-      delay(1000);
-      esp_restart();  // Redémarrage logiciel sans effacer la RTC RAM
+      uint64_t sleep_time = (uint64_t)periode_cycle * 60 * 1000000;
+      if (mode_rapide==12)
+      sleep_time = (uint64_t)periode_cycle * 1000000;
+      passage_deep_sleep(sleep_time);  // 30ULL * 1000000ULL); //
     }
 
     if (strcmp(reg, "PING0") == 0) 
@@ -2804,7 +2823,7 @@ uint8_t requete_Set_String(int param, const char *texte)
         storeIPAddress(primaryDNS, ip);
       }
     }
-    if (param == 54)  // registre 5 : Adresse DNS2
+    if (param == 54)  // registre 54 : Adresse DNS2
     {
       if (ip.fromString(texte))
       {
@@ -2821,7 +2840,7 @@ uint8_t requete_Set_String(int param, const char *texte)
       strncpy(nom_routeur, texte, sizeof(nom_routeur) - 1);
       nom_routeur[sizeof(nom_routeur) - 1] = '\0';  // Assure la terminaison
     }
-    if ((param == 56) && (strlen(texte) <= 15)) // registre 7 : mdp routeur
+    if ((param == 56) && (strlen(texte) <= 15)) // registre 56 : mdp routeur
     {
       res = 0;
       preferences_nvs.putString("Mdp", texte);
@@ -3014,7 +3033,34 @@ uint8_t requete_GetReg(int reg, float *valeur) {
     }
 
     if (!res) break; // found and set
+  if (reg == 13)  // registre 13 : activation OTA
+  {
+    res = 0;
+    *valeur = otaEnabled;
   }
+  if (reg == 43)  // registre 43 : puissance d'emission wifi
+  {
+    res = 0;
+    int8_t power;
+    esp_wifi_get_max_tx_power(&power);
+    *valeur = power/4;  // Convertir en dBm  : unité = 0.25 dBm => diviser par 4
+
+  }
+  if (reg == 44)  // registre 44 : wifi_sleep
+  {
+    wifi_ps_type_t mode;
+    esp_err_t err = esp_wifi_get_ps(&mode);    
+    if (err == ESP_OK) {
+      res = 0;
+      *valeur =  (float)mode;
+    }
+  }
+  if (reg == 45) // registre 45 : niveau de reception wifi
+  {
+    res = 0;
+    *valeur = WiFi.RSSI();
+  }
+}
 
   res2 = requete_GetReg_appli(reg, valeur);
 
@@ -3037,9 +3083,11 @@ uint8_t requete_SetReg(int param, float valeurf)
     if (param == 4)  // registre 4 : reset par watchdog
     {
       if (valeur == 13) {
+        //ESP.restart();
         res = 0;
         writeLog('S', 9, 0, 0, "Boot W");
         delay(500);
+        //param_wdt_delay = WDT_TIMEOUT * 12;
         esp_restart();  // Redémarrage logiciel sans effacer la RTC RAM
       }
     }
@@ -3081,7 +3129,7 @@ uint8_t requete_SetReg(int param, float valeurf)
             if (p.key != nullptr && p.key[0] != '\0') preferences_nvs.putUChar(p.key, v);
             res = 0;
             // If changing cycle related value trigger timer update when appropriate
-            if (p.var == (void*)&periode_cycle || strcmp(p.key, "cycle") == 0) {
+            if (p.var == (void*)&periode_cycle || (p.var == (void*)&mode_rapide)) {  //strcmp(p.key, "cycle") == 0)
               modif_timer_cycle();
             }
           }
@@ -3122,8 +3170,76 @@ uint8_t requete_SetReg(int param, float valeurf)
         //Serial.printf("get level = %d\n", (int)lvl);
       }
     }
+    if (param == 11)  // registre 11 : réglage date numérique ddmmyy
+    {
+      if (setRtcDateFromNumericValue(valeur))
+      {
+        init_time = 4;
+        res = 0;
+      }
+    }
 
-    //res2 = requete_SetReg_appli(param, valeurf);
+    if (param == 12)  // registre 12 : réglage heure numérique hhmmss/hhmm/hh
+    {
+      if (setRtcTimeFromNumericValue(valeur))
+      {
+        init_time = 4;
+        res = 0;
+      /*  uint8_t hh;
+        uint8_t mm;
+        uint8_t ss;
+        if (valeur <= 99) {
+          hh = valeur;
+          mm = 0;
+          ss = 0;
+        } else if (valeur <= 9999) {
+          hh = valeur / 100;
+          mm = valeur % 100;
+          ss = 0;
+        } else {
+          hh = valeur / 10000;
+          mm = (valeur / 100) % 100;
+          ss = valeur % 100;
+        }
+        heure = hh + (float)mm / 60.0 + (float)ss / 3600.0;
+        //preferences_nvs.putUChar("Heure", hh);*/
+      }
+    }
+
+    if (param == 13)  // registre 13 : 
+    {
+      if (valeur==0)
+      {
+        res = 0;
+        otaEnabled = false;
+      }
+      if (valeur==1)
+      {
+        res = 0;
+        otaEnabled = true;
+        otaStartTime = millis();
+      }
+    }
+    if (param == 43)  // registre 43 : puissance d'emission wifi
+    {
+      if ((valeur >= -12) && (valeur <= 20))  // entre -12dBm et +20dBm
+      {
+        res = 0;
+        wifi_power_t power = (wifi_power_t)(valeur * 4);  // Convertir en unité de 0.25 dBm
+        esp_wifi_set_max_tx_power(power);
+      }
+    }
+    if (param == 44)  // registre 44 : wifi_sleep :0(none), 1(light), 2(max)
+    {
+      if ((valeur>=0) && (valeur <=3))
+      {
+        res = 0;
+        esp_wifi_set_ps((wifi_ps_type_t)valeur);  //  mode de sommeil Wi-Fi
+      }
+    }
+
+
+    res2 = requete_SetReg_appli(param, valeurf);
 
   }
   //return (res+res2-1);
@@ -3147,15 +3263,8 @@ uint8_t requete_SetReg(int param, float valeurf)
   }
 }*/
 
-float absoluteHumidity(float T, float RH)
-{
-    return (13.247f * RH/100 * exp((17.67f * T) / (T + 243.5f)))
-           / (273.15f + T);
-}
-
-
 // type=0:tout  type=1:maj uniquement (sans tableaux)
-void requete_status(char *json_response, uint8_t socket, uint32_t type)
+void requete_status(char *json_response, uint8_t socket, uint8_t type)
 {
 
   force_stay_awake = true;
@@ -3239,8 +3348,8 @@ void requete_status(char *json_response, uint8_t socket, uint32_t type)
   p += sprintf(p, "\"PPE\":%i,", Proch_periode);
 
   p += sprintf(p, "\"Text\":%.1f,", Text);
-  p += sprintf(p, "\"Tint\":%.1f,", Tint);
-  p += sprintf(p, "\"Humid\":%.1f,", Humid);
+  p += sprintf(p, "\"Tint\":%.2f,", Tint);
+  p += sprintf(p, "\"Humid\":%.2f,", Humid);
 
 
   uint8_t batSI = 0;
@@ -3254,50 +3363,28 @@ void requete_status(char *json_response, uint8_t socket, uint32_t type)
   p += sprintf(p, "\"TextV\":%i,", TextV);  // Temp ext de la veille
   p += sprintf(p, "\"TintV\":%i,", TintV);  // Temp ext de la veille
   
+  // ajout des paramètres de l'application
+  p = requete_status_appli(json_response, p, type);
 
   // Tableaux : E(erreurs) T(temp)
-  if (type)  // pas d'envoi des graphiques si type=0(maj)
+  if (!type)  // pas d'envoi des graphiques si type=1(maj)
   {
     // Nota: les 0 sont sautés
-    uint8_t i, nod, param, nb_graph, sel;
-    int16_t data;
-    for (nod = 0; nod < NB_CAPT; nod++)
-    {
-      for (param=0; param<3; param++)  // param:Temp, hr,ha
-      {
-        sel = type & 1;
-        if (!type || nb_graph > 2) break;
-        type>>1;  
-
-        if (sel) 
-        {
-          nb_graph++;
-          // valeurs de temperature
-          for (i = 0; i < NB_Val_Graph; i++)
-          {
-            if (param < 2)  // param 0 et 1 : Temp et Humid
-              data = valT[i][nod][param];
-            else  // param 2 : ha
-            {
-              float HA = absoluteHumidity((float)(valT[i][nod][0])/10, (float)(valT[i][nod][1])/10);
-              data = HA*10;
-            }
-            //printf("val %d : %u\n",i, temp_pisc_hist[i]);
-            if (data)  // on n'envoie pas les 0
-            {
-              int remaining = MAX_DUMP - (p - json_response) -2;
-              int n = snprintf(p, remaining, "\"T%d%d\":%i,", nb_graph-1, i, data);
-              if (n >= remaining || n < 0) {
-              // Plus assez de place dans le buffer ou erreur
-                type=0; // arrêter l'ajout de données
-                break;
-              }
-              p+=n;
-            }
+    uint8_t i,j;  // 10 car par valeur => 1000 car par graphique
+    for (j = 0; j < NB_Graphique; j++) {
+      // valeurs de temperature
+      for (i = 0; i < NB_Val_Graph; i++) {
+        //printf("val %d : %u\n",i, temp_pisc_hist[i]);
+        if (graphique[i][j]) {
+          int remaining = MAX_DUMP - (p - json_response) -2;
+          int n = snprintf(p, remaining, "\"T%d%d\":%i,", j, i, graphique[i][j]);
+          if (n >= remaining || n < 0) {
+          // Plus assez de place dans le buffer ou erreur
+            break;
           }
+          p+=n;
         }
       }
-      if (!type || nb_graph > 2) break;
     }
   }
 
@@ -4164,7 +4251,7 @@ void loop()
     // Si on est en mode "Stay Awake" (réveil par bouton), on attend 30s
     if (force_stay_awake) {
       if (millis() > wake_up_time) {
-         Serial.println("Délai de configuration de 30s expiré. Passage en Deep Sleep...");
+         Serial.printf("Délai de configuration de %is expiré. Passage en Deep Sleep...\n", prolong_veille);
          delay(100);
 
          uint64_t sleep_time = (uint64_t)periode_cycle * 60 * 1000000;
@@ -4192,10 +4279,9 @@ void passage_deep_sleep(uint64_t temps)
     return;
   }
 
-  Serial.printf("PIN_REVEIL state = %d %d\n", digitalRead(PIN_REVEIL), gpio_get_level((gpio_num_t)PIN_REVEIL));
-  Serial.flush();
+  if (log_detail>=3) Serial.printf("PIN_REVEIL state = %d %d\n", digitalRead(PIN_REVEIL), gpio_get_level((gpio_num_t)PIN_REVEIL));
 
-  Serial.printf("Passage deep sleep pour %llu\n", (unsigned long long)sleep_us);
+  if (log_detail>=2) Serial.printf("Passage deep sleep pour %llu milis:%lu\n", (unsigned long long)sleep_us, millis());
 
   esp_sleep_enable_timer_wakeup(temps);
 
@@ -4216,6 +4302,9 @@ void passage_deep_sleep(uint64_t temps)
     //esp_sleep_enable_ext1_wakeup_io(mask, ESP_EXT1_WAKEUP_ANY_HIGH); // Réveil par bouton (niveau bas)
     gpio_config_t config;
       config.pin_bit_mask = ((1ULL << PIN_REVEIL));// | (1ULL << PIN_REVEIL2));
+      #ifdef PIR_ACTIF
+        config.pin_bit_mask = ((1ULL << PIN_REVEIL) | (1ULL << PIN_REVEIL2));
+      #endif
       config.mode = GPIO_MODE_INPUT;
       config.pull_up_en = GPIO_PULLUP_DISABLE;
       config.pull_down_en = GPIO_PULLDOWN_DISABLE;
@@ -4226,7 +4315,7 @@ void passage_deep_sleep(uint64_t temps)
       //esp_sleep_enable_gpio_wakeup();
       esp_sleep_enable_ext1_wakeup(config.pin_bit_mask, ESP_EXT1_WAKEUP_ANY_HIGH);
 
-      Serial.println("Going to sleep...");
+      if (log_detail>=3)Serial.println("Going to sleep...");
   #endif
 
   #ifdef ESP32_S3   // S3
@@ -4271,12 +4360,15 @@ void passage_deep_sleep(uint64_t temps)
     esp_deep_sleep_enable_gpio_wakeup( 1ULL << PIN_REVEIL, ESP_GPIO_WAKEUP_GPIO_LOW);
   #endif
   
-  WiFi.disconnect(true);
-  WiFi.mode(WIFI_OFF);
+  // Do not call the WiFi shutdown API when the radio was never enabled.
+  if (WiFi.getMode() != WIFI_OFF) {
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+  }
 
-  Serial.printf("GPIO state: %d\n", gpio_get_level((gpio_num_t)PIN_REVEIL));
+  if (log_detail>=1) Serial.printf("GPIO state: %d milis:%lu\n", gpio_get_level((gpio_num_t)PIN_REVEIL), millis());
   Serial.flush();
-  delay(500);
+  ///delay(10);
   yield();
 
   esp_deep_sleep_start();
@@ -4448,8 +4540,8 @@ server.on("/verif", HTTP_GET, [](AsyncWebServerRequest *request){
     #ifdef ESP_VEILLE
       // Si une commande /get arrive, on force le réveil si ce n'est pas déjà fait
       force_stay_awake = true;
-      wake_up_time = millis() + 40000;  // prolongation si requete get
-      Serial.println("Activité /get détectée : prolongation du délai de 30s.");
+      wake_up_time = millis() + prolong_veille*1000;  // prolongation si requete get
+      if (log_detail >=3) Serial.printf("Activité /get détectée : prolongation du délai de %is.\n", prolong_veille);
     #endif
 
     if ((request->hasParam("type")) && (request->hasParam("reg")))
@@ -4511,8 +4603,8 @@ server.on("/verif", HTTP_GET, [](AsyncWebServerRequest *request){
     #ifdef ESP_VEILLE
       // Si une commande /set arrive, on force le réveil si ce n'est pas déjà fait
       force_stay_awake = true;
-      wake_up_time = millis() + 40000;  // prolongation si requete set
-      Serial.println("Activité /set détectée : prolongation du délai de 30s.");
+      wake_up_time = millis() + prolong_veille*1000;  // prolongation si requete set
+      Serial.printf("Activité /set détectée : prolongation du délai de %is.\n", prolong_veille);
     #endif
 
     buffer_dmp[0]=0;
@@ -4581,7 +4673,7 @@ server.on("/verif", HTTP_GET, [](AsyncWebServerRequest *request){
   // requette Status pour récuperer toutes les valeurs
   server.on("/status", HTTP_GET, [](AsyncWebServerRequest *request) {
     //static char json_response[MAX_DUMP];
-    uint32_t type=1;
+    uint8_t type=1;
 
     if ( request->hasParam("type") )
       type = request->getParam("type")->value().toInt();
@@ -5009,7 +5101,9 @@ uint16_t decod_asc16 (uint8_t * index)
 	return val;
 }
 
-#if defined(ARDUINO_ARCH_ESP32) && defined(WIFI_TX_INFO_T)
+//#if defined(ARDUINO_ARCH_ESP32) && defined(WIFI_TX_INFO_T)
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+//#if defined(ARDUINO_ARCH_ESP32) && defined(WIFI_TX_INFO_T)
 void OnDataSent(const wifi_tx_info_t* info, esp_now_send_status_t status)
 #else
 void OnDataSent(const uint8_t* mac_addr, esp_now_send_status_t status)

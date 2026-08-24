@@ -8,6 +8,7 @@
 // variables externes
 
 #define NB_CAPT 6  // 6 capteurs remote
+#define Graph_Specifique
 
 #define ESP_TJ_ACTIF     // Rôle principal 
 
@@ -43,6 +44,7 @@
   //#define WatchDog
 #endif
 
+#define BTN_COUNT 1  // Nombre de boutons
 
 //#define Temp_int_DHT22
 //#define Temp_int_DS18B20
@@ -65,7 +67,7 @@ const uint8_t MAC_SERVEUR[] = {0xB0, 0xCB, 0xD8, 0xE9, 0x0C, 0x74};
 
 
 #define MAX_PAYLOAD 200
-#define MAX_TEMP 30   // taille max autorisée pour l'envoi des temp/humid
+#define NB_VAL_TAB 12   // taille max autorisée pour la reception des temp/humid
 #define SERVER_ADD 'H'
 
 typedef struct __attribute__((packed)) {   // packed permet d'éviter les octets de padding ajoutés par le compilateur
@@ -113,33 +115,27 @@ extern uint8_t DelaiWebsocket;
 extern  uint8_t skip_graph;
 extern uint16_t Seuil_batt_sonde;
 extern  uint8_t Nb_jours_Batt_log;
-extern uint8_t boot_rapide;
+extern uint8_t pas_de_veille;
 extern  uint16_t prolong_veille;
 extern  uint8_t action_stockage;
 extern  uint8_t action_envoi;
-extern char nom_routeur[];
-extern char mdp_routeur[];
-extern uint8_t websocket_on;
-extern char ip_websocket[];
-extern uint8_t id_websocket;
-extern uint8_t WIFI_CHANNEL;
+extern uint8_t boot_rapide;
+extern char latitude[];
+extern char longitude[];
 extern  uint8_t last_wifi_channel;
+extern uint8_t WIFI_CHANNEL;
 extern uint8_t local_ip[4];
 extern uint8_t gateway[4];
 extern uint8_t subnet[4];
 extern uint8_t primaryDNS[4];
 extern uint8_t secondaryDNS[4];
-extern uint8_t cap_nb_images;
-extern uint8_t cap_interval_dsec;
-extern uint8_t cap_size;
-extern uint8_t cap_jpg_comp;
-extern char latitude[];
-extern char longitude[];
-extern uint8_t pas_de_veille;
-extern uint8_t im_x_debut;
-extern uint8_t im_x_fin;
-extern uint8_t im_y_debut;
-extern uint8_t im_y_fin;
+extern char mac_gw_str[20];
+
+extern char nom_routeur[];
+extern char mdp_routeur[];
+extern uint8_t websocket_on;
+extern char ip_websocket[];
+extern uint8_t id_websocket;
 
 // Current camera JPEG quality (camera sensor 'quality' value, e.g. 63..4)
 extern uint8_t current_sensor_quality;
@@ -234,7 +230,7 @@ typedef struct {
 
 float readBatteryVoltage();
 void lectureHeure();
-void requete_status(char* json_response, uint8_t socket, uint32_t type);
+void requete_status(char* json_response, uint8_t socket, uint8_t type);
 void recep_message1(UartMessage_t* messa);  // recept_uart1
 void maj_etat_chaudiere_delai(uint8_t delai);
 void modif_timer_cycle(void);
@@ -298,9 +294,12 @@ typedef struct {
 
 
 constexpr int NB_Val_Graph = 99;
+constexpr int NB_Graphique = 10;  // Example value, replace with the actual number of graphics
 
 #define MAX_DUMP 6900              // 600 + 1050 car par graphique
+
 extern char buffer_dmp[MAX_DUMP];  // max 250 logs, 16 octets chacun
+extern int BTN_PIN[];  // Pins des boutons
 
 extern  uint8_t esp_now_actif;  // 0:esp_now inactif  1:actif
 
@@ -331,9 +330,7 @@ extern unsigned long last_remote_Tint_time, last_remote_Text_time,
 extern  uint16_t err_Tint, err_Text, err_Heure;
 
 extern  float tempI_moy24h, tempE_moy24h, Hum_24h, HA_moy24h;
-extern  uint8_t cpt24_Tint, cpt24_Text, cpt24_Hum, cpt24_HA;
 
-extern int16_t valT[NB_Val_Graph][NB_CAPT][4];
 extern int16_t graphique[NB_Val_Graph][10];
 extern int16_t batt_sonde[NB_CAPT][20];
 
@@ -345,8 +342,8 @@ extern TimerHandle_t xTimer_cycle_chaud;
 extern uint8_t compteur_graph;
 
 extern  uint8_t etat_now;
+extern uint8_t mac_gw[];   // B0:CB:D8:E9:0C:74  adresse mac esp_dest
 
-extern volatile bool force_stay_awake;
 extern unsigned long wake_up_time;  // Temps de réveil/dernière activité
 
 void writeLog(uint8_t code, uint8_t c1, uint8_t c2, uint8_t c3,
