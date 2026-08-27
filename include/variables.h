@@ -76,8 +76,16 @@ typedef struct __attribute__((packed)) {   // packed permet d'éviter les octets
     uint8_t longueur;
     uint8_t code;
     uint8_t code2;
+    uint8_t num_seq;  // pour renvoi Ack
     uint8_t payload[MAX_PAYLOAD];
 } Message_EspNow;
+
+// Structure pour la queue de réception ESP-NOW (message + adresse source)
+typedef struct {
+  uint8_t src_addr[6];
+  Message_EspNow msg;
+  int len;
+} EspNowRecvMsg_t;
 
 
 
@@ -269,7 +277,8 @@ typedef enum {
   EVENT_24H,
   EVENT_3min,
   EVENT_CYCLE,
-  EVENT_UART1
+  EVENT_UART1,
+  EVENT_ESP_RECV
 } systeme_eve_type_t;
 
 // Structure d'un événement tache sequenceur
@@ -305,6 +314,7 @@ extern  uint8_t esp_now_actif;  // 0:esp_now inactif  1:actif
 
 extern uint8_t protocole;
 extern QueueHandle_t eventQueue;  // File d'attente des événements sequenceur
+extern QueueHandle_t QueueEspNow;  // File d'attente messages ESP-NOW reçus
 extern uint16_t erreur_queue;
 extern TimerHandle_t debounceTimer;
 extern TimerHandle_t xTimer_activ_chaud;
@@ -360,6 +370,7 @@ void setup_2();
 uint8_t requete_action_appli(const char* reg, const char* data);
 void appli_event_on(systeme_eve_t evt);
 void appli_event_off(systeme_eve_t evt);
+void traitement_espnow_recv(EspNowRecvMsg_t &recv);
 uint8_t requete_Get_appli(String var, float* valeur);
 uint8_t requete_Set_appli(String param, int val);
 uint8_t requete_GetReg_appli(int reg, float* valeur);

@@ -198,7 +198,7 @@ RTC_NOINIT_ATTR uint8_t mode_reseau=13;  //  0:pas de reseau 11:wifi_AP_usine  1
 #endif
 
 RTC_NOINIT_ATTR char nom_routeur[16]="";
-RTC_NOINIT_ATTR char mdp_routeur[16]="";
+RTC_NOINIT_ATTR char mdp_routeur[25]="";
 RTC_NOINIT_ATTR char mac_gw_str[20]=""; // 34:34:23:23:23:12
 RTC_NOINIT_ATTR char latitude[16]="";
 RTC_NOINIT_ATTR char longitude[16]="";
@@ -254,6 +254,7 @@ RTC_NOINIT_ATTR uint8_t periode_cycle;
 QueueHandle_t eventQueue;  // File d'attente des événements sequenceur
 QueueHandle_t QueueUart;   // file d'attente pour message uart en réception
 QueueHandle_t QueueUart1;   // file d'attente pour message uart en réception
+QueueHandle_t QueueEspNow;  // file d'attente pour messages ESP-NOW reçus
 
 //timers
 esp_timer_handle_t timer;
@@ -432,6 +433,8 @@ uint8_t requete_GetReg(int reg, float *valeur);
 uint16_t trouve_indexG (uint8_t page);
 char* requete_status_appli(char *json_response, char *p, uint8_t type);
 void init_ram_variables_appli();
+void init_rtc_variables_appli();
+uint8_t connectWiFiRapide();
 uint8_t connectWiFiRapide();
 void setup_appli();
 
@@ -776,7 +779,7 @@ void taskHandler(void *parameter) {
 
                     if (force_stay_awake) {
                         wake_up_time = millis() + prolong_veille*1000; // Prolonger sur réception  message UART
-                        Serial.printf("Activité UART détectée : prolongation du délai de %is.\n", prolong_veille);
+                        Serial.printf("Activité UART détectée : prolongation du délai de %is.\n\r", prolong_veille);
                     }
                     
                     UartMessage_t uartMsg;
@@ -792,7 +795,7 @@ void taskHandler(void *parameter) {
                 }
 
                 case EVENT_UART1: {
-                  //Serial.printf(">> Événement UART reçu: byte = %s\n", evt.msg); 
+                  //Serial.printf(">> Événement UART reçu: byte = %s\n\r", evt.msg); 
                   // 1-12  1-12:48
                   UartMessage_t uartMsg1;
                   while (xQueueReceive(QueueUart1, &uartMsg1, 0) == pdTRUE) {
@@ -806,6 +809,14 @@ void taskHandler(void *parameter) {
                   break;
                 }
  
+                case EVENT_ESP_RECV: {
+                  EspNowRecvMsg_t espRecv;
+                  while (xQueueReceive(QueueEspNow, &espRecv, 0) == pdTRUE) {
+                    traitement_espnow_recv(espRecv);
+                  }
+                  break;
+                }
+
                 case EVENT_GPIO_OFF:  
                     Serial.printf("GPIO:off:%i\n\r", evt.data);
                     appli_event_off(evt);
@@ -817,7 +828,7 @@ void taskHandler(void *parameter) {
                     break;
 
                case EVENT_SENSOR:
-                    Serial.printf(">> Événement Capteur: valeur = %lu\n", (unsigned long)evt.data);
+                    Serial.printf(">> Événement Capteur: valeur = %lu\n\r", (unsigned long)evt.data);
                     break;
 
                 case EVENT_ECOUTE_WebSock:   // chaque seconde
@@ -979,6 +990,14 @@ void taskHandler(void *parameter) {
 void init_rtc_variables()
 {
   cpt_cycle_batt = 1;
+  for (uint8_t i=0; i<NB_Graphique; i++)
+  {
+    for (uint8_t j=0; j<NB_Val_Graph; j++)
+    {
+      graphique[j][i]=0;
+    }
+  }
+  init_rtc_variables_appli();
 }
 
 void init_ram_variables()
@@ -989,13 +1008,6 @@ void init_ram_variables()
   nb_err_reseau=0;
   Tint=20.0;
   Text=10.0;
-  for (uint8_t i=0; i<NB_Graphique; i++)
-  {
-    for (uint8_t j=0; j<NB_Val_Graph; j++)
-    {
-      graphique[j][i]=0;
-    }
-  }
   init_ram_variables_appli();
 }
 
@@ -1033,7 +1045,7 @@ uint8_t verif_read(Param &p)
       uint8_t v = *(uint8_t*)p.var;
       if (v < p.min16 || v > p.max16) {
         *(uint8_t*)p.var = (uint8_t)p.def_u16;
-        Serial.printf("****RAZ parametre %s : defaut %u\n", p.key, *(uint8_t*)p.var);
+        Serial.printf("****RAZ parametre %s : defaut %u\n\r", p.key, *(uint8_t*)p.var);
         return 1;
       }
       return 0;
@@ -1043,7 +1055,7 @@ uint8_t verif_read(Param &p)
       uint16_t v = *(uint16_t*)p.var;
       if (v < p.min16 || v > p.max16) {
         *(uint16_t*)p.var = (uint16_t)p.def_u16;
-        Serial.printf("****RAZ parametre %s : defaut %u\n", p.key, *(uint16_t*)p.var);
+        Serial.printf("****RAZ parametre %s : defaut %u\n\r", p.key, *(uint16_t*)p.var);
         return 1;
       }
       return 0;
@@ -1054,7 +1066,7 @@ uint8_t verif_read(Param &p)
       if (v < p.min16 || v > p.max16) {
         IPAddress ip = defaultIPAddressForKey(p.key);
         storeIPAddress((uint8_t*)p.var, ip);
-        Serial.printf("****RAZ parametre %s : defaut %s\n", p.key, ip.toString().c_str());
+        Serial.printf("****RAZ parametre %s : defaut %s\n\r", p.key, ip.toString().c_str());
         return 1;
       }
       return 0;
@@ -1065,7 +1077,7 @@ uint8_t verif_read(Param &p)
       if (strlen(ptr) == 0 || strlen(ptr) >= p.size) {
         strncpy(ptr, p.def_str, p.size - 1);
         ptr[p.size - 1] = '\0';
-        Serial.printf("****RAZ parametre %s : defaut %s\n", p.key, ptr);
+        Serial.printf("****RAZ parametre %s : defaut %s\n\r", p.key, ptr);
         return 1;
       }
       return 0;
@@ -1083,8 +1095,8 @@ uint8_t nvs_read(Param &p) {
 
   // If the parameter is marked rtc_valid, skip NVS read (value lives in RTC/memory)
   if (p.rtc_valid) {
-    if (p.key && p.key[0] != '\0') Serial.printf("parametre %s : rtc_valid -> skip NVS read\n", p.key);
-    else Serial.printf("parametre (no-key) : rtc_valid -> skip NVS read\n");
+    if (p.key && p.key[0] != '\0') Serial.printf("parametre %s : rtc_valid -> skip NVS read\n\r", p.key);
+    else Serial.printf("parametre (no-key) : rtc_valid -> skip NVS read\n\r");
     return 0; // nothing to read from NVS for RTC-backed parameters
   }
 
@@ -1099,13 +1111,13 @@ uint8_t nvs_read(Param &p) {
           v = (uint8_t)p.def_u16;
           preferences_nvs.putUChar(p.key, v);
 
-          Serial.printf("****RAZ NVS parametre %s : defaut %u\n", p.key, v);
+          Serial.printf("****RAZ NVS parametre %s : defaut %u\n\r", p.key, v);
           if (ptr) *ptr = v;
           return 1;
         }
 
         if (ptr) *ptr = v;
-        if (log_detail>=3) Serial.printf("parametre %s : valeur %u\n", p.key, v);
+        if (log_detail>=3) Serial.printf("parametre %s : valeur %u\n\r", p.key, v);
         return 0;
       }
 
@@ -1118,13 +1130,13 @@ uint8_t nvs_read(Param &p) {
           v = (uint16_t)p.def_u16;
           preferences_nvs.putUShort(p.key, v);
 
-          Serial.printf("****RAZ NVS parametre %s : defaut %u\n", p.key, v);
+          Serial.printf("****RAZ NVS parametre %s : defaut %u\n\r", p.key, v);
           if (ptr) *ptr = v;
           return 1;
         }
 
         if (ptr) *ptr = v;
-        if (log_detail>=3) Serial.printf("parametre %s : valeur %u\n", p.key, v);
+        if (log_detail>=3) Serial.printf("parametre %s : valeur %u\n\r", p.key, v);
         return 0;
       }
 
@@ -1138,7 +1150,7 @@ uint8_t nvs_read(Param &p) {
 
         if (!hasValue) {
           preferences_nvs.putULong(p.key, (uint32_t)ip);
-          Serial.printf("****RAZ NVS parametre %s : defaut %s\n", p.key, ip.toString().c_str());
+          Serial.printf("****RAZ NVS parametre %s : defaut %s\n\r", p.key, ip.toString().c_str());
           if (ipBytes) storeIPAddress(ipBytes, ip);
           return 1;
         }
@@ -1147,10 +1159,10 @@ uint8_t nvs_read(Param &p) {
         if (v < p.min16 || v > p.max16) {
           ip = defaultIPAddressForKey(p.key);
           preferences_nvs.putULong(p.key, (uint32_t)ip);
-          Serial.printf("****RAZ NVS parametre %s : defaut %s\n", p.key, ip.toString().c_str());
+          Serial.printf("****RAZ NVS parametre %s : defaut %s\n\r", p.key, ip.toString().c_str());
         }
         if (ipBytes) storeIPAddress(ipBytes, ip);
-        if (log_detail>=3) Serial.printf("parametre %s : valeur %s\n", p.key, ip.toString().c_str());
+        if (log_detail>=3) Serial.printf("parametre %s : valeur %s\n\r", p.key, ip.toString().c_str());
         return 0;
       }
 
@@ -1170,7 +1182,7 @@ uint8_t nvs_read(Param &p) {
           strncpy(ptr, p.def_str, 31);
           ptr[31] = '\0';
 
-          Serial.printf("****RAZ NVS parametre %s : defaut %s\n", p.key, ptr);
+          Serial.printf("****RAZ NVS parametre %s : defaut %s\n\r", p.key, ptr);
           return 1;
         }
 
@@ -1178,7 +1190,7 @@ uint8_t nvs_read(Param &p) {
         strncpy(ptr, v.c_str(), p.size - 1);
         ptr[p.size - 1] = '\0';
 
-        if (log_detail>=3) Serial.printf("parametre %s : valeur %s\n", p.key, ptr);
+        if (log_detail>=3) Serial.printf("parametre %s : valeur %s\n\r", p.key, ptr);
         return 0;
       }   
 
@@ -1264,7 +1276,7 @@ void setup()
   resetReason0 = (uint8_t) esp_reset_reason();
   Serial.begin(115200);
   
-  if (log_detail>=2) Serial.printf("milli A: %lu  boot_rapide:%i log_detail:%i\n", t, boot_rapide, log_detail);  // 39ms
+  if (log_detail>=2) Serial.printf("milli A: %lu  boot_rapide:%i log_detail:%i\n\r", t, boot_rapide, log_detail);  // 39ms
 
 
   // Cause réveil du deep/light_sleep (undefined si pas de reveil deep/light sleep)
@@ -1291,12 +1303,12 @@ void setup()
     {
       reveil = 4;
       uint64_t wakeup_pins = esp_sleep_get_ext1_wakeup_status();
-      if (log_detail>=3) Serial.printf("wakeup_pins: %016llX\n", wakeup_pins);
+      if (log_detail>=3) Serial.printf("wakeup_pins: %016llX\n\r", wakeup_pins);
       if (wakeup_pins & (1ULL << PIN_REVEIL)) {
           if (log_detail>=3) Serial.println("Réveil par PIN1");
           force_stay_awake = true; // Réveil par bouton Reveil : on reste éveillé pour l'UART
           wake_up_time = millis() + prolong_veille*1000; // Prolonger si Bouton réveil est appuyé
-          if (log_detail>=3) Serial.printf("\n*** RÉVEIL PAR BOUTON : Mode configuration UART actif pour %is ***\n", prolong_veille);
+          if (log_detail>=3) Serial.printf("\n*** RÉVEIL PAR BOUTON : Mode configuration UART actif pour %is ***\n\r", prolong_veille);
       }
 
       if (wakeup_pins & (1ULL << PIN_REVEIL2)) {
@@ -1315,7 +1327,7 @@ void setup()
   resetREASON0[sizeof(resetREASON0) - 1] = '\0'; // Garantit la terminaison null
 
   // determination si la RTC reste valide (apres un reveil deepsleep)
-  //Serial.printf("rtc_magic: %08X\n", rtc_magic);
+  //Serial.printf("rtc_magic: %08X\n\r", rtc_magic);
   if (rtc_magic != 0x05343211 )  
   {
     // RTC non valide = cold reset
@@ -1407,7 +1419,7 @@ void setup()
     cpt_securite = 10;
   #endif
 
-  if (log_detail>=3) Serial.printf("milli E: %lu\n", millis());
+  if (log_detail>=3) Serial.printf("milli E: %lu\n\r", millis());
 
   if (log_detail>=2) Serial.printf("**** Initialisation - reset: %s  type_rev:%i Sleep:%i rtc:%i\n\r",resetREASON0, type_reveil, wakeup_reason, rtc_valid );
 
@@ -1442,6 +1454,9 @@ void setup()
 
     // création de la queue de reception des message uart
     QueueUart = xQueueCreate(20, sizeof(UartMessage_t));
+
+    // création de la queue de reception des messages ESP-NOW
+    QueueEspNow = xQueueCreate(4, sizeof(EspNowRecvMsg_t));
 
     // Création de la tâche FreeRTOS
     //xTaskCreatePinnedToCore (taskHandler, "TaskHandler", 4096, NULL, 1, &taskHandle,0);
@@ -1516,8 +1531,8 @@ void setup()
 
       }
     }
-    log_detail=4;
-    apply_log_detail(log_detail);
+    //log_detail=4;
+    //apply_log_detail(log_detail);
   }
   else  // vérification de cohérence des parametres nvs
   {
@@ -1569,15 +1584,15 @@ void setup()
       }
     }*/
   }
-  if (log_detail>=3) Serial.printf("milli F: %lu\n", millis());
+  if (log_detail>=3) Serial.printf("milli F: %lu\n\r", millis());
 
   setup_1();  // --------------   initialisation sonde temperature--10ms----------
 
-   if (log_detail>=3) Serial.printf("milli G: %lu\n", millis());
+   if (log_detail>=3) Serial.printf("milli G: %lu\n\r", millis());
 
    setup_appli();
 
-   if (log_detail>=3) Serial.printf("milli G2: %lu\n", millis());
+   if (log_detail>=3) Serial.printf("milli G2: %lu\n\r", millis());
 
   // -------------- partition "log_flash" custom  pour Write-log -------------------
 
@@ -1620,7 +1635,7 @@ void setup()
     log_errG=0;
     if (log_detail>=4) Serial.println("Partition 'log_flash_G' trouvée.");
   }
-  if (log_detail>=2) Serial.printf("milli H: %lu\n", millis());
+  if (log_detail>=2) Serial.printf("milli H: %lu\n\r", millis());
 
   // -------------   Configuration des timers FreeRTOS (max 49 jours)   --------------------
 
@@ -1666,7 +1681,7 @@ void setup()
     xTimerStart(xTimer_Watchdog,100);
   #endif
 
-  if (log_detail>=2) Serial.printf("milli I: %lu\n", millis());
+  if (log_detail>=2) Serial.printf("milli I: %lu\n\r", millis());
 
   xTimerStart(xTimer_Init,100);
   xTimerStart(xTimer_24H,100);
@@ -1675,7 +1690,7 @@ void setup()
 
   if (boot_rapide < 3) delay(1000); // Attente 4 sec pour que les boutons se stabilisent
 
-  if (log_detail>=2) Serial.printf("milli J: %lu\n", millis());
+  if (log_detail>=2) Serial.printf("milli J: %lu\n\r", millis());
 
   // Reset du watchdog avant de démarrer le réseau
   #ifdef WatchDog
@@ -1734,7 +1749,7 @@ void setup()
       
       // Protection UART avant connexion WiFi
       //protectUARTDuringWiFi();
-      if (log_detail>=2) Serial.printf("milli J1: %lu\n", millis());
+      if (log_detail>=2) Serial.printf("milli J1: %lu\n\r", millis());
 
       uint8_t wifiResult;
       if (boot_rapide >2)
@@ -1753,7 +1768,7 @@ void setup()
         }
         else Serial.println("Wifi pas ok");
       }
-      if (log_detail>=2) Serial.printf("milli J2: %lu\n", millis());
+      if (log_detail>=2) Serial.printf("milli J2: %lu\n\r", millis());
 
       // Protection UART après connexion WiFi
       //protectUARTDuringWiFi();
@@ -1793,7 +1808,7 @@ void setup()
 
     server.begin();
 
-  if (log_detail>=2) Serial.printf("milli L: %lu\n", millis());
+  if (log_detail>=2) Serial.printf("milli L: %lu\n\r", millis());
 
   #endif // No_reseau
 
@@ -1805,7 +1820,7 @@ void setup()
 
   uint16_t Cpu_freq = getCpuFrequencyMhz();
   setCpuFrequencyMhz(80);
-  if (log_detail>=3) Serial.printf("CPU Freq: avant:%i  apres:%u\n", Cpu_freq, (unsigned int)getCpuFrequencyMhz());
+  if (log_detail>=3) Serial.printf("CPU Freq: avant:%i  apres:%u\n\r", Cpu_freq, (unsigned int)getCpuFrequencyMhz());
 
 
 
@@ -1820,7 +1835,7 @@ void setup()
 
   setup_2();  // Esp_now  et read LogG(99)
 
-  if (log_detail>=2) Serial.printf("milli M: %lu\n", millis());
+  if (log_detail>=2) Serial.printf("milli M: %lu\n\r", millis());
 
   // ------------  Configuration OTA -----------------
 
@@ -2057,7 +2072,7 @@ uint8_t read_modbus(uint8_t param, int16_t *valeur)  // lecture des input regist
   ModReadBuffer[0] = 0;
   //result = node.readHoldingRegisters( param, lg); 224=ku8MBInvalidSlaveID
   result = node.readInputRegisters(param, lg);
-  //Serial.printf("read result = %i param=%i\r\n", result, param);
+  //Serial.printf("read result = %i param=%i\n\r", result, param);
   vTaskDelay(30/ portTICK_PERIOD_MS);
 
   // do something with data if read is successful
@@ -2507,7 +2522,7 @@ uint8_t requete_Get_String (uint8_t type, String var, char *valeur)
   {
     res = 0;
     strncpy(valeur, WiFi.macAddress().c_str(), 18);
-    Serial.printf("MAC GW ce module: %s\n", valeur);
+    Serial.printf("MAC GW ce module: %s\n\r", valeur);
   }
   if (paramV == 61)  // registre 61 : adresse MAC Gateway
   {
@@ -2573,7 +2588,7 @@ uint8_t requete_Set_Action(const char *reg, const char *data)
       if (err == ESP_OK) {
         Serial.println("NVS erased successfully.");
       } else {
-        Serial.printf("Error erasing NVS: 0x%x\n", err);
+        Serial.printf("Error erasing NVS: 0x%x\n\r", err);
       }
     }
 
@@ -2609,7 +2624,7 @@ uint8_t requete_Set_Action(const char *reg, const char *data)
           // totalRunTime est en "ticks" CPU, idleRunTime aussi
           // Charge CPU estimée = 1 - (idleRunTime / totalRunTime)
           float cpuLoad = 1.0f - ((float)idleRunTime / (float)totalRunTime);
-          printf("CPU Load: %.2f%%\n", cpuLoad * 100);
+          printf("CPU Load: %.2f%%\n\r", cpuLoad * 100);
       }*/
     }
 
@@ -2733,27 +2748,27 @@ uint8_t requete_Set_Action(const char *reg, const char *data)
         if (PARAMS[i].key && PARAMS[i].key[0] != '\0') {
           switch (PARAMS[i].type) {
             case U8:
-              Serial.printf("parametre %s : %u\n", PARAMS[i].key, *(uint8_t*)PARAMS[i].var);
+              Serial.printf("parametre %s : %u\n\r", PARAMS[i].key, *(uint8_t*)PARAMS[i].var);
               break;
             case U16:
-              Serial.printf("parametre %s : %u\n", PARAMS[i].key, *(uint16_t*)PARAMS[i].var);
+              Serial.printf("parametre %s : %u\n\r", PARAMS[i].key, *(uint16_t*)PARAMS[i].var);
               break;
             case U32:
-              Serial.printf("parametre %s : %lu\n", PARAMS[i].key, *(uint32_t*)PARAMS[i].var);
+              Serial.printf("parametre %s : %lu\n\r", PARAMS[i].key, *(uint32_t*)PARAMS[i].var);
               break;
             case STR:
-              Serial.printf("parametre %s : %s\n", PARAMS[i].key, (const char*)PARAMS[i].var);
+              Serial.printf("parametre %s : %s\n\r", PARAMS[i].key, (const char*)PARAMS[i].var);
               break;
             case IP: {
               uint8_t* ipBytes = static_cast<uint8_t*>(PARAMS[i].var);
               if (ipBytes) {
                 IPAddress ip = makeIPAddress(ipBytes);
-                Serial.printf("parametre %s : valeur %s\n", PARAMS[i].key, ip.toString().c_str());
+                Serial.printf("parametre %s : valeur %s\n\r", PARAMS[i].key, ip.toString().c_str());
               }
               break;
             }
             default:
-              Serial.printf("parametre %s : <type inconnu>\n", PARAMS[i].key);
+              Serial.printf("parametre %s : <type inconnu>\n\r", PARAMS[i].key);
               break;
           }
         }
@@ -2840,7 +2855,7 @@ uint8_t requete_Set_String(int param, const char *texte)
       strncpy(nom_routeur, texte, sizeof(nom_routeur) - 1);
       nom_routeur[sizeof(nom_routeur) - 1] = '\0';  // Assure la terminaison
     }
-    if ((param == 56) && (strlen(texte) <= 15)) // registre 56 : mdp routeur
+    if ((param == 56) && (strlen(texte) <= 24)) // registre 56 : mdp routeur
     {
       res = 0;
       preferences_nvs.putString("Mdp", texte);
@@ -2937,7 +2952,7 @@ static bool setRtcDateFromNumericValue(int32_t numericDate)
   settimeofday(&tv, NULL);
 
   getLocalTime(&timeinfo, 1000);
-  Serial.printf("RTC date set %02u/%02u/%04u %02u:%02u:%02u\n",
+  Serial.printf("RTC date set %02u/%02u/%04u %02u:%02u:%02u\n\r",
                 day, month, year,
                 localTime.tm_hour, localTime.tm_min, localTime.tm_sec);
   return true;
@@ -2991,7 +3006,7 @@ static bool setRtcTimeFromNumericValue(int32_t numericTime)
   settimeofday(&tv, NULL);
 
   getLocalTime(&timeinfo, 1000);
-  Serial.printf("RTC time set %02u:%02u:%02u\n", hours, minutes, seconds);
+  Serial.printf("RTC time set %02u:%02u:%02u\n\r", hours, minutes, seconds);
   return true;
 }
 
@@ -3167,7 +3182,7 @@ uint8_t requete_SetReg(int param, float valeurf)
         apply_log_detail(log_detail);
         Serial.printf("log_detail:%i\n\r", log_detail);
         //esp_log_level_t lvl = esp_log_level_get("mjpegw");
-        //Serial.printf("get level = %d\n", (int)lvl);
+        //Serial.printf("get level = %d\n\r", (int)lvl);
       }
     }
     if (param == 11)  // registre 11 : réglage date numérique ddmmyy
@@ -3374,7 +3389,7 @@ void requete_status(char *json_response, uint8_t socket, uint8_t type)
     for (j = 0; j < NB_Graphique; j++) {
       // valeurs de temperature
       for (i = 0; i < NB_Val_Graph; i++) {
-        //printf("val %d : %u\n",i, temp_pisc_hist[i]);
+        //printf("val %d : %u\n\r",i, temp_pisc_hist[i]);
         if (graphique[i][j]) {
           int remaining = MAX_DUMP - (p - json_response) -2;
           int n = snprintf(p, remaining, "\"T%d%d\":%i,", j, i, graphique[i][j]);
@@ -3427,7 +3442,7 @@ void printMemoryStatus()
     size_t totalFree = esp_get_free_heap_size();
 
     snprintf(buffer_dmp, MAX_DUMP,
-              "Memoire interne:%u   contigu:%u  total:%u\r\n",
+              "Memoire interne:%u   contigu:%u  total:%u\r\n\r",
               (unsigned int)internalFree,
               (unsigned int)largestBlock,
               (unsigned int)totalFree);
@@ -3724,7 +3739,7 @@ void debounceCallback(TimerHandle_t xTimer)
         // Vérification si l'état a changé et atteint un seuil
         if (pressCounter[i] == VALIDATION_COUNT && stableButtonState[i] != LOW) {
             stableButtonState[i] = LOW;
-            //Serial.printf("Btn %d On !\n", i); // peut planter
+            //Serial.printf("Btn %d On !\n\r", i); // peut planter
             if (!init_masquage) { // masquage les 30 premières secondes
               systeme_eve_t evt = { EVENT_GPIO_ON, (uint32_t)i};
               if (xQueueSend(eventQueue, &evt, 0) != pdTRUE) 
@@ -3737,7 +3752,7 @@ void debounceCallback(TimerHandle_t xTimer)
         else if (pressCounter[i] == 0 && stableButtonState[i] != HIGH)
         {
             stableButtonState[i] = HIGH;
-            //Serial.printf("Btn %d off00 !\n", i);
+            //Serial.printf("Btn %d off00 !\n\r", i);
             if (!init_masquage) { // masquage les 30 premières secondes
               systeme_eve_t evt = { EVENT_GPIO_OFF, (uint32_t)i };
               if (xQueueSend(eventQueue, &evt, 0) != pdTRUE) 
@@ -3768,7 +3783,7 @@ void checkPartitions()
     esp_partition_iterator_t it = esp_partition_find(ESP_PARTITION_TYPE_ANY, ESP_PARTITION_SUBTYPE_ANY, NULL);
     while (it != NULL) {
         const esp_partition_t *p = esp_partition_get(it);
-        Serial.printf("Type: %02X, Sous-type: %02X, Nom: %s, Taille: %lu octets, Adresse: 0x%lX\n", p->type, p->subtype, p->label, p->size, p->address);
+        Serial.printf("Type: %02X, Sous-type: %02X, Nom: %s, Taille: %lu octets, Adresse: 0x%lX\n\r", p->type, p->subtype, p->label, p->size, p->address);
         it = esp_partition_next(it);
     }
   #endif
@@ -3894,7 +3909,7 @@ void writeLog(uint8_t code, uint8_t c1, uint8_t c2, uint8_t c3, const char* mess
       if (log_detail>=4) Serial.printf("Log écrit !, size:%d\n\r", size);
       activeIndex++;  // Avance pour le prochain log
     } else {
-      Serial.printf("Erreur écriture log: %s\n", esp_err_to_name(err));
+      Serial.printf("Erreur écriture log: %s\n\r", esp_err_to_name(err));
     }
   }
 }
@@ -4095,7 +4110,7 @@ void writeLogG(uint8_t code, uint16_t c1, uint16_t c2, uint16_t c3)
       Serial.println("Log écrit_G !");
       activeIndexG++;  // Avance pour le prochain log
     } else {
-      Serial.printf("Erreur écriture log_G: %s\n", esp_err_to_name(err));
+      Serial.printf("Erreur écriture log_G: %s\n\r", esp_err_to_name(err));
     }
   }
 }
@@ -4141,7 +4156,7 @@ int readLastLogsG(int nombre)
       //delay(100);
       LogEntryG log;
       esp_partition_read(logPartitionG, addrlect, &log, LOG_ENTRY_SIZEG);
-      //Serial.printf("%u c1:%i c2:%i c3:%i\r\n", log.timestamp, log.c1, log.c2, log.c3);
+      //Serial.printf("%u c1:%i c2:%i c3:%i\r\n\r", log.timestamp, log.c1, log.c2, log.c3);
       if (log.timestamp == 0xFFFFFFFF) 
         break;  // Fin des logs
       
@@ -4150,7 +4165,7 @@ int readLastLogsG(int nombre)
       graphique[i][4] = log.c2;
       graphique[i][5] = log.c3;
     }
-    //Serial.printf("fin %i\r\n", i);
+    //Serial.printf("fin %i\r\n\r", i);
     //delay(100);
   }
   return i;
@@ -4234,7 +4249,7 @@ void loop()
       //Serial.println("Debounce timer callback");
   }
 
-  //Serial.printf("PIN_4 state = %d\n", digitalRead(PIN_REVEIL));
+  //Serial.printf("PIN_4 state = %d\n\r", digitalRead(PIN_REVEIL));
 
   //heap_caps_check_integrity_all(true);  // place ce test dans ton loop()
 
@@ -4251,7 +4266,7 @@ void loop()
     // Si on est en mode "Stay Awake" (réveil par bouton), on attend 30s
     if (force_stay_awake) {
       if (millis() > wake_up_time) {
-         Serial.printf("Délai de configuration de %is expiré. Passage en Deep Sleep...\n", prolong_veille);
+         Serial.printf("Délai de configuration de %is expiré. Passage en Deep Sleep...\n\r", prolong_veille);
          delay(100);
 
          uint64_t sleep_time = (uint64_t)periode_cycle * 60 * 1000000;
@@ -4274,14 +4289,14 @@ void passage_deep_sleep(uint64_t temps)
 
   // If the global flag pas_de_veille is set, skip entering deep sleep
   if (pas_de_veille) {
-    Serial.printf("passage_deep_sleep(): pas_de_veille==1 -> skipping deep sleep (requested %llu us)\n", (unsigned long long)sleep_us);
+    Serial.printf("passage_deep_sleep(): pas_de_veille==1 -> skipping deep sleep (requested %llu us)\n\r", (unsigned long long)sleep_us);
     Serial.flush();
     return;
   }
 
-  if (log_detail>=3) Serial.printf("PIN_REVEIL state = %d %d\n", digitalRead(PIN_REVEIL), gpio_get_level((gpio_num_t)PIN_REVEIL));
+  if (log_detail>=3) Serial.printf("PIN_REVEIL state = %d %d\n\r", digitalRead(PIN_REVEIL), gpio_get_level((gpio_num_t)PIN_REVEIL));
 
-  if (log_detail>=2) Serial.printf("Passage deep sleep pour %llu milis:%lu\n", (unsigned long long)sleep_us, millis());
+  if (log_detail>=2) Serial.printf("Passage deep sleep pour %llu milis:%lu\n\r", (unsigned long long)sleep_us, millis());
 
   esp_sleep_enable_timer_wakeup(temps);
 
@@ -4366,7 +4381,7 @@ void passage_deep_sleep(uint64_t temps)
     WiFi.mode(WIFI_OFF);
   }
 
-  if (log_detail>=1) Serial.printf("GPIO state: %d milis:%lu\n", gpio_get_level((gpio_num_t)PIN_REVEIL), millis());
+  if (log_detail>=1) Serial.printf("GPIO state: %d milis:%lu\n\r", gpio_get_level((gpio_num_t)PIN_REVEIL), millis());
   Serial.flush();
   ///delay(10);
   yield();
@@ -4395,7 +4410,7 @@ uint8_t testHttpServerLocal() {
     } 
     else
     {
-      Serial.printf("[Test HTTP] Erreur serveur: Code %d\n", httpCode);
+      Serial.printf("[Test HTTP] Erreur serveur: Code %d\n\r", httpCode);
       err=2;
     }
     http.end();
@@ -4422,12 +4437,12 @@ uint8_t testConnexionGoogle() {
     if (httpCode > 0) {
       if (log_detail>=4) 
       {
-        Serial.printf("[HTTP] Réponse code : %d\n", httpCode);
+        Serial.printf("[HTTP] Réponse code : %d\n\r", httpCode);
         String payload = http.getString();
         Serial.println(payload.substring(0, 200)); // Affiche les 200 premiers caractères
       }
     } else {
-      Serial.printf("[HTTP] Échec, erreur : %s\n", http.errorToString(httpCode).c_str());
+      Serial.printf("[HTTP] Échec, erreur : %s\n\r", http.errorToString(httpCode).c_str());
       err=2;
     }
 
@@ -4505,7 +4520,7 @@ void setupRoutes()
   });
 
 server.on("/verif", HTTP_GET, [](AsyncWebServerRequest *request){
-  Serial.printf("/verif callback sur le cœur %d\n", xPortGetCoreID());
+  Serial.printf("/verif callback sur le cœur %d\n\r", xPortGetCoreID());
   request->send(200, "text/plain", "OK");
 });
 
@@ -4541,7 +4556,7 @@ server.on("/verif", HTTP_GET, [](AsyncWebServerRequest *request){
       // Si une commande /get arrive, on force le réveil si ce n'est pas déjà fait
       force_stay_awake = true;
       wake_up_time = millis() + prolong_veille*1000;  // prolongation si requete get
-      if (log_detail >=3) Serial.printf("Activité /get détectée : prolongation du délai de %is.\n", prolong_veille);
+      if (log_detail >=3) Serial.printf("Activité /get détectée : prolongation du délai de %is.\n\r", prolong_veille);
     #endif
 
     if ((request->hasParam("type")) && (request->hasParam("reg")))
@@ -4604,7 +4619,7 @@ server.on("/verif", HTTP_GET, [](AsyncWebServerRequest *request){
       // Si une commande /set arrive, on force le réveil si ce n'est pas déjà fait
       force_stay_awake = true;
       wake_up_time = millis() + prolong_veille*1000;  // prolongation si requete set
-      Serial.printf("Activité /set détectée : prolongation du délai de %is.\n", prolong_veille);
+      Serial.printf("Activité /set détectée : prolongation du délai de %is.\n\r", prolong_veille);
     #endif
 
     buffer_dmp[0]=0;
@@ -4656,7 +4671,7 @@ server.on("/verif", HTTP_GET, [](AsyncWebServerRequest *request){
         snprintf(json_response, sizeof(json_response), "{\"val\":\"%s\"}", buffer_dmp);
         res2=0;
       }
-      if (log_detail>=4) Serial.printf("Retour Get: res2:%i %s=%f type:%i %s\n", res2, reg.c_str(), valeur, type, json_response);
+      if (log_detail>=4) Serial.printf("Retour Get: res2:%i %s=%f type:%i %s\n\r", res2, reg.c_str(), valeur, type, json_response);
     }
 
     if (!res2)  // 0:ok  1:erreur
@@ -4737,13 +4752,13 @@ const char* dumpTasksInfo() {
   taskCount = uxTaskGetSystemState(taskStatusArray, 24, &totalRunTime);
 
   if (taskCount == 0) {
-    snprintf(buffer_dmp, MAX_DUMP, "Erreur : aucune tâche trouvée\n");
+    snprintf(buffer_dmp, MAX_DUMP, "Erreur : aucune tâche trouvée\n\r");
     return buffer_dmp;
   }
 
   // En-tête
-  const char* header = "Name             State Prio Stack Core\n"
-                       "----------------------------------------\n";
+  const char* header = "Name             State Prio Stack Core\n\r"
+                       "----------------------------------------\n\r";
   size_t headerLen = strlen(header);
   memcpy(buffer_dmp, header, headerLen);
   pos = headerLen;
@@ -4762,7 +4777,7 @@ const char* dumpTasksInfo() {
     }
 
     int written = snprintf(buffer_dmp + pos, MAX_DUMP - pos,
-                           "%-17s %s     %2u   %5u   %d\n",
+                           "%-17s %s     %2u   %5u   %d\n\r",
                            ts.pcTaskName,
                            stateChar,
                            (unsigned int)ts.uxCurrentPriority,
@@ -4770,7 +4785,7 @@ const char* dumpTasksInfo() {
                            ts.xCoreID);
 
     if (written <= 0 || (pos + written >= MAX_DUMP - 2)) {
-      snprintf(buffer_dmp+ pos, MAX_DUMP - pos, "\n[Tronqué...]\n");
+      snprintf(buffer_dmp+ pos, MAX_DUMP - pos, "\n[Tronqué...]\n\r");
       break;
     }
 
@@ -4778,7 +4793,7 @@ const char* dumpTasksInfo() {
   }
 
   if (taskCount == 24) {
-    snprintf(buffer_dmp + pos, MAX_DUMP - pos, "[Attention: 24 taches atteint]\n");
+    snprintf(buffer_dmp + pos, MAX_DUMP - pos, "[Attention: 24 taches atteint]\n\r");
   }*/
 
   return buffer_dmp;
@@ -4840,7 +4855,7 @@ void print_task_states() {
       default:         state = '?'; break;
     }
 
-    Serial.printf("%-18s %c     %2u   %5u\n",
+    Serial.printf("%-18s %c     %2u   %5u\n\r",
       taskStatusArray[i].pcTaskName,
       state,
       (unsigned int)taskStatusArray[i].uxCurrentPriority,
@@ -4855,17 +4870,17 @@ void diagnoseWiFiError() {
   
   // 1. Informations de configuration
   Serial.println("1. Configuration WiFi :");
-  Serial.printf("   - SSID: %s\n", nom_routeur);
-  Serial.printf("   - Mot de passe: %s\n", (strlen(mdp_routeur) > 0) ? "***configuré***" : "NON CONFIGURÉ");
-  Serial.printf("   - Mode réseau: %d\n", mode_reseau);
+  Serial.printf("   - SSID: %s\n\r", nom_routeur);
+  Serial.printf("   - Mot de passe: %s\n\r", (strlen(mdp_routeur) > 0) ? "***configuré***" : "NON CONFIGURÉ");
+  Serial.printf("   - Mode réseau: %d\n\r", mode_reseau);
   
   // 2. Configuration IP
   Serial.println("2. Configuration IP :");
-  Serial.printf("   - IP statique: %s\n", makeIPAddress(local_ip).toString().c_str());
-  Serial.printf("   - Gateway: %s\n", makeIPAddress(gateway).toString().c_str());
-  Serial.printf("   - Subnet: %s\n", makeIPAddress(subnet).toString().c_str());
-  Serial.printf("   - DNS1: %s\n", makeIPAddress(primaryDNS).toString().c_str());
-  Serial.printf("   - DNS2: %s\n", makeIPAddress(secondaryDNS).toString().c_str());
+  Serial.printf("   - IP statique: %s\n\r", makeIPAddress(local_ip).toString().c_str());
+  Serial.printf("   - Gateway: %s\n\r", makeIPAddress(gateway).toString().c_str());
+  Serial.printf("   - Subnet: %s\n\r", makeIPAddress(subnet).toString().c_str());
+  Serial.printf("   - DNS1: %s\n\r", makeIPAddress(primaryDNS).toString().c_str());
+  Serial.printf("   - DNS2: %s\n\r", makeIPAddress(secondaryDNS).toString().c_str());
   
   // 3. État actuel du WiFi
   Serial.println("3. État WiFi actuel :");
@@ -4890,9 +4905,9 @@ void diagnoseWiFiError() {
   if (n == 0) {
     Serial.println("   Aucun réseau trouvé");
   } else {
-    Serial.printf("   %d réseaux trouvés:\n", n);
+    Serial.printf("   %d réseaux trouvés:\n\r", n);
     for (int i = 0; i < min(n, 5); ++i) { // Affiche seulement les 5 premiers
-      Serial.printf("   - %s (RSSI: %ld, Ch: %ld, %s)\n", 
+      Serial.printf("   - %s (RSSI: %ld, Ch: %ld, %s)\n\r", 
         WiFi.SSID(i).c_str(), 
         WiFi.RSSI(i), 
         WiFi.channel(i),
@@ -4936,7 +4951,7 @@ void diagnoseWiFiError() {
     Serial.println("   - Configurez une adresse IP statique");
   }
   
-  Serial.println("=== FIN DIAGNOSTIC ===\n");
+  Serial.println("=== FIN DIAGNOSTIC ===\n\r");
 }
 
 // Fonction de connexion WiFi avec diagnostic amélioré
@@ -4949,7 +4964,7 @@ uint8_t connectWiFiWithDiagnostic() {
     return 1;
   }
   
-  Serial.printf("Connexion au réseau: %s\n", nom_routeur);
+  if (log_detail>=3) Serial.printf("Connexion au réseau: %s\n\r", nom_routeur);
     // Configuration WiFi en mode Station pour ESP-NOW
     WiFi.mode(WIFI_STA); 
     
@@ -4961,7 +4976,7 @@ uint8_t connectWiFiWithDiagnostic() {
       IPAddress ipPrimaryDNS = makeIPAddress(primaryDNS);
       IPAddress ipSecondaryDNS = makeIPAddress(secondaryDNS);
 
-      Serial.printf("Configuration IP statique: %s\n", ipLocal.toString().c_str());
+      if (log_detail>=3) Serial.printf("Configuration IP statique: %s\n\r", ipLocal.toString().c_str());
       if (!WiFi.config(ipLocal, ipGateway, ipSubnet, ipPrimaryDNS, ipSecondaryDNS)) {
       Serial.println("❌ ERREUR: Échec de configuration IP statique");
       return 2;
@@ -4995,14 +5010,14 @@ uint8_t connectWiFiWithDiagnostic() {
   if (WiFi.status() == WL_CONNECTED) {
     if (log_detail>=4) {
       Serial.println("✅ WiFi connecté avec succès !");
-      Serial.printf("   - Canal: %ld\n", WiFi.channel());
-      Serial.printf("   - Masque: %s\n", WiFi.subnetMask().toString().c_str());
-      Serial.printf("   - Gateway: %s\n", WiFi.gatewayIP().toString().c_str());
-      Serial.printf("   - DNS: %s\n", WiFi.dnsIP().toString().c_str());
+      Serial.printf("   - Canal: %ld\n\r", WiFi.channel());
+      Serial.printf("   - Masque: %s\n\r", WiFi.subnetMask().toString().c_str());
+      Serial.printf("   - Gateway: %s\n\r", WiFi.gatewayIP().toString().c_str());
+      Serial.printf("   - DNS: %s\n\r", WiFi.dnsIP().toString().c_str());
     }
-    if (log_detail>=3) {
-      Serial.printf("   - Adresse IP: %s\n", WiFi.localIP().toString().c_str());
-      Serial.printf("   - RSSI: %d dBm\n", WiFi.RSSI());
+    if (log_detail>=2) {
+      Serial.printf("   - Adresse IP: %s\n\r", WiFi.localIP().toString().c_str());
+      Serial.printf("   - RSSI: %d dBm\n\r", WiFi.RSSI());
     }
     // Optimisation consommation : activation du Modem Sleep
     WiFi.setSleep(false);
@@ -5025,7 +5040,7 @@ uint8_t connectWiFiRapide()
     return 1;
   }
   
-  Serial.printf("Connexion au réseau: %s\n", nom_routeur);
+  Serial.printf("Connexion au réseau: %s\n\r", nom_routeur);
     // Configuration WiFi en mode Station pour ESP-NOW
     WiFi.mode(WIFI_STA); 
     
@@ -5037,7 +5052,7 @@ uint8_t connectWiFiRapide()
       IPAddress ipPrimaryDNS = makeIPAddress(primaryDNS);
       IPAddress ipSecondaryDNS = makeIPAddress(secondaryDNS);
 
-      Serial.printf("Configuration IP statique: %s\n", ipLocal.toString().c_str());
+      Serial.printf("Configuration IP statique: %s\n\r", ipLocal.toString().c_str());
       if (!WiFi.config(ipLocal, ipGateway, ipSubnet, ipPrimaryDNS, ipSecondaryDNS)) {
       Serial.println("❌ ERREUR: Échec de configuration IP statique");
       return 2;
@@ -5109,8 +5124,8 @@ void OnDataSent(const wifi_tx_info_t* info, esp_now_send_status_t status)
 void OnDataSent(const uint8_t* mac_addr, esp_now_send_status_t status)
 #endif
 {
-    if (status == ESP_NOW_SEND_SUCCESS) {
+    /*if (status == ESP_NOW_SEND_SUCCESS) {
         ackReceived = true;
         ackChannel = WiFi.channel();  // canal courant
-    }
+    }*/
 }

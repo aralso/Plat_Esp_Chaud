@@ -1,4 +1,12 @@
+/* 
 
+Appli : Serveur
+
+TODO : 
+
+08/2025 : lecture capteurs, Ack, blocage heure, pas de reseau=>pas de lecture heure, 
+
+*/
 #include <Arduino.h>
 #include <ctype.h>
 #include <stdbool.h>
@@ -40,6 +48,7 @@ uint8_t Graph_val[NB_Graphique];  // 0:pas de graphique, 1:temp 2:HR 3:HA 4:temp
 
 volatile uint8_t ackReceived = false;  // global pour indiquer que le peer a acké
 volatile int ackChannel = -1;       // canal où ça a marché
+uint8_t num_sequentiel;  // pour Ack
 
 float absoluteHumidity(float temperature, float relativeHumidity)
 {
@@ -276,6 +285,10 @@ void enreg_24h(uint8_t)
 }
 
 void setup_appli()
+{
+}
+
+void init_rtc_variables_appli()
 {
 }
 
@@ -763,13 +776,37 @@ uint8_t conversion_node(uint8_t emetteur, uint8_t *node)
 } Message_EspNow;*/
 
 void OnDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
-//void OnDataRecv(const esp_now_peer_info_t * info, const uint8_t *incomingData, int len) {
+  if (len > (int)sizeof(Message_EspNow)) {
+    Serial.println("⚠️ message trop long");
+    return;
+  }
+  EspNowRecvMsg_t espRecv;
+  memcpy(espRecv.src_addr, info->src_addr, 6);
+  memcpy(&espRecv.msg, data, len);
+  espRecv.len = len;
+
+  if (xQueueSend(QueueEspNow, &espRecv, 0) != pdTRUE) {
+    Serial.println("⚠️ QueueEspNow pleine");
+    return;
+  }
+  systeme_eve_t evt = { EVENT_ESP_RECV, 0 };
+  if (xQueueSend(eventQueue, &evt, 0) != pdTRUE) {
+    erreur_queue++;
+    Serial.println("⚠️ eventQueue pleine (ESP_RECV)");
+  }
+}
+
+void traitement_espnow_recv(EspNowRecvMsg_t &recv) {
+  Message_EspNow &msg = recv.msg;
+  int len = recv.len;
+  uint8_t *src_addr = recv.src_addr;
+
   // 🔍 DIAGNOSTIC: Afficher infos de réception
   if (log_detail>=2) 
   {
     Serial.println("\n📥 ========== RECEPTION ESP-NOW ==========");
     for (int i = 0; i < 6; i++) {
-      Serial.printf("%02X", info->src_addr[i]);
+      Serial.printf("%02X", src_addr[i]);
       if (i < 5) Serial.print(":");
     }
     Serial.println();
@@ -780,26 +817,23 @@ void OnDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
   wifi_second_chan_t second;
   esp_wifi_get_channel(&current_channel, &second);
   if (log_detail>=3) Serial.printf("   Canal WiFi actuel: %d\n", current_channel);
-  if (log_detail>=3)Serial.printf("   Taille reçue: %d octets\n", len);
-  
-  if (len > sizeof(Message_EspNow)) {
-    Serial.println("⚠️ message trop long");
-    return;
-  }
-  Message_EspNow msg;
-  memcpy(&msg, data, sizeof(msg));
+  if (log_detail>=3) Serial.printf("   Taille reçue: %d octets\n", len);
+
+  num_sequentiel = msg.num_seq;
+  uint8_t renvoi_ack=0;
 
   for (uint8_t i = 0; i < len; i++) {
-    Serial.printf("%02X ", data[i]);
+    if (log_detail>=2) Serial.printf("%02X ", ((uint8_t*)&msg)[i]);
   }
 
   if ((msg.destinataire & 0x7F) == SERVER_ADD)
   {
     uint8_t node;
     uint8_t res_node = conversion_node(msg.emetteur, &node);
-    if (res_node==2)    memcpy(Node[node].mac_node, info->src_addr, 6);
+    if (res_node==2)    memcpy(Node[node].mac_node, src_addr, 6);
 
     if (log_detail>=3) Serial.printf("Message destiné au serveur de %c node:%i\n", msg.emetteur, res_node);
+
     if (msg.code == 'C')
     {
       if (log_detail>=3) Serial.println("Message de type Capteur");
@@ -817,7 +851,7 @@ void OnDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
           {
             Cap_temp[nb] = msg.payload[pos++] | (msg.payload[pos++] << 8);
             Cap_hum[nb] = msg.payload[pos++] | (msg.payload[pos++] << 8);
-            Cap_ecart[nb] = msg.payload[pos++] | (msg.payload[pos++] << 8);
+            Cap_ecart[nb] = msg.payload[pos++] ;
             if (nb) ecart_total += Cap_ecart[nb];
           }
           // timestamp actuel
@@ -847,8 +881,9 @@ void OnDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
           file.close();
         }
         if (log_detail>=3) Serial.println("Données sauvegardées");
+        renvoi_ack=1;  // renvoyer un ACK pour ce type de message 
       }
-      if (msg.code2 == 'I')  // lecture instantanée du capteur
+      else if (msg.code2 == 'I')  // lecture instantanée du capteur
       {
         if (log_detail>=2) Serial.println("   Temperature instantanee");
         uint16_t Ctemp;
@@ -877,7 +912,7 @@ void OnDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
         Serial.printf("   %s,%d,%.2f,%.2f,%.2f\n", buffer, msg.emetteur, Ctemp/100.0-40, Chum/100.0, CHA/100.0  );
 
         file.close();
-
+        renvoi_ack=1;
       }
       if (msg.code2 == 'J')
       {
@@ -885,19 +920,57 @@ void OnDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
 
         if (!res_node && len==9)
         {
+          renvoi_ack=1;
         }
       }
     }
     else if (msg.code == 'B') { // Batterie
         if (log_detail>=2) Serial.printf(" Type de message batterie: code:%d\n", msg.code);
       
-
-      //Vbatt_Th = receivedMessage.value;
-      //Serial.printf("✅ Vbatt_Th mise à jour: %.2fV\n", Vbatt_Th);
-      //Vbatt_Th_I = 1;
+      renvoi_ack=1;
     }
     else 
         Serial.printf("⚠️ Type de message inconnu: code:%d\n", msg.code);
+
+    // renvoie un Accusé reception
+    if ((res_node!=1) && (renvoi_ack==1))
+    {
+      Message_EspNow ack_msg;
+      ack_msg.destinataire = msg.emetteur | 0x80;
+      ack_msg.emetteur = SERVER_ADD ;  // bit fort à 1 pour indiquer que c'est un message hexadécimal  
+      ack_msg.longueur = 3+0;  // longueur du payload
+      ack_msg.code = 'A';    // code pour ACK
+      ack_msg.code2 = 0;     // pas de sous-code
+      ack_msg.num_seq = num_sequentiel;  // renvoyer le numéro séquentiel reçu
+
+      esp_now_peer_info_t peer = {};
+      memcpy(peer.peer_addr, src_addr, ESP_NOW_ETH_ALEN);
+
+      peer.channel = 0;          // canal WiFi courant
+      peer.ifidx = WIFI_IF_STA;  // interface utilisée
+      peer.encrypt = false;
+
+      if (!esp_now_is_peer_exist(peer.peer_addr)) {
+        esp_err_t err = esp_now_add_peer(&peer);
+        if (err != ESP_OK && err != ESP_ERR_ESPNOW_EXIST) {
+          Serial.printf("Erreur ajout peer: %d (%s)\n",
+                        err, esp_err_to_name(err));
+          return;
+        }
+      } 
+          
+      Serial.printf("src_addr:%02x:%02x:%02x:%02x:%02x:%02x dest:%02X emetteur:%02X long:%d code:%c code2:%d num_seq:%d\n",
+                    src_addr[0], src_addr[1], src_addr[2], src_addr[3], src_addr[4], src_addr[5],
+                    ack_msg.destinataire, ack_msg.emetteur, ack_msg.longueur, ack_msg.code, ack_msg.code2, ack_msg.num_seq);
+      esp_err_t result = esp_now_send(src_addr, (uint8_t *)&ack_msg, ack_msg.longueur+3);
+      if (result == ESP_OK) {
+        if (log_detail>=3) Serial.println("✅ Accusé de réception envoyé");
+      } else {
+        Serial.printf("❌ Erreur envoi ACK: %i\n", result);
+      }
+    }
+
+
   }
   else
   {
