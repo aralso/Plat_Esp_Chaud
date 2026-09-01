@@ -7,7 +7,6 @@
 
 // variables externes
 
-#define NB_CAPT 6  // 6 capteurs remote
 #define Graph_Specifique
 
 #define ESP_TJ_ACTIF     // Rôle principal 
@@ -229,6 +228,7 @@ typedef struct {
   uint16_t nb_mess_recu;
   uint8_t actif;
   uint8_t mac_node[6];
+  uint16_t last_update; // derniere reception de message en jours (1er:1/1/2026)
 } S_Node;
 
 typedef struct {
@@ -315,6 +315,10 @@ extern  uint8_t esp_now_actif;  // 0:esp_now inactif  1:actif
 extern uint8_t protocole;
 extern QueueHandle_t eventQueue;  // File d'attente des événements sequenceur
 extern QueueHandle_t QueueEspNow;  // File d'attente messages ESP-NOW reçus
+extern uint8_t nb_capt_sdcard;     // nombre de capteurs trouvés sur SD
+extern uint8_t strat_actif;        // stratégie d'affichage active (indice 0..NB_STRAT_CAPT-1)
+void requete_GetStrat(uint8_t strat, char* buf, size_t size);
+void requete_SetStrat(uint8_t strat, uint8_t* caps, uint8_t* vals, uint8_t nb);
 extern uint16_t erreur_queue;
 extern TimerHandle_t debounceTimer;
 extern TimerHandle_t xTimer_activ_chaud;
@@ -341,8 +345,7 @@ extern  uint16_t err_Tint, err_Text, err_Heure;
 
 extern  float tempI_moy24h, tempE_moy24h, Hum_24h, HA_moy24h;
 
-extern int16_t graphique[NB_Val_Graph][10];
-extern int16_t batt_sonde[NB_CAPT][20];
+extern int16_t graphique[NB_Val_Graph][NB_Graphique];
 
 extern uint16_t Seuil_batt_arret_ESP;  // millivolt
 extern uint8_t type_reveil;  //0:pas de reveil 1: réveil par timer, 2: réveil par bouton_reveil 3:reveil par PIR
@@ -367,6 +370,7 @@ void setup_0();
 void setup_nvs();
 void setup_1();
 void setup_2();
+void setup_3();
 uint8_t requete_action_appli(const char* reg, const char* data);
 void appli_event_on(systeme_eve_t evt);
 void appli_event_off(systeme_eve_t evt);

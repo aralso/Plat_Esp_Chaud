@@ -31,20 +31,37 @@ TODO :
 extern WiFiClient client;
 extern Preferences preferences_nvs;  // Déclaration externe
 
+#define NB_CAPT 15  // 15 capteurs remote actifs
+#define NB_STRAT_CAPT 3  // Nb de strategie differentes d'affichage de graphiques
+#define NB_CAPT_AFF 30  // nb max de capteurs affichables
+#define NB_VAL_HISTO_BATT 20  // nombre de valeurs historiques de batterie par sonde
+
+typedef struct {
+  uint8_t adresse; // '0' à 'z'
+  uint8_t categorie; // 1:temp
+  uint8_t actif;  // 1:inactif 2:actif
+  uint8_t ordre;  // 100 à 200
+  uint8_t nom_capt[13];
+} capt_temp_t;
+
+capt_temp_t Capt[NB_CAPT_AFF];
+uint8_t nb_capt_sdcard;
 
 RTC_NOINIT_ATTR uint8_t  WIFI_CHANNEL;
 RTC_NOINIT_ATTR uint8_t etat_now;
 RTC_NOINIT_ATTR uint16_t Seuil_batt_sonde;  // millivolt
 RTC_NOINIT_ATTR uint8_t Nb_jours_Batt_log;
 
-int16_t batt_sonde[NB_CAPT][20];  // valeur batterie sonde remode
+int16_t batt_sonde[NB_CAPT_AFF][NB_VAL_HISTO_BATT];  // 20 dernieres valeurs batterie sonde remode
 
 RTC_NOINIT_ATTR uint8_t compteur_graph;
 RTC_NOINIT_ATTR uint16_t compteur_24h;
 
 S_Node Node[NB_CAPT];
-uint8_t Graph_capt[NB_Graphique];  // tableau de correspondance entre graphique et capteur
-uint8_t Graph_val[NB_Graphique];  // 0:pas de graphique, 1:temp 2:HR 3:HA 4:temp24 5:HR24, 6:HA24
+RTC_NOINIT_ATTR uint8_t Graph_capt[NB_Graphique][NB_STRAT_CAPT];  // tableau de correspondance entre graphique et capteur
+RTC_NOINIT_ATTR uint8_t Graph_val[NB_Graphique][NB_STRAT_CAPT];  // 0:pas de graphique, 1:temp 2:HR 3:HA 4:temp24 5:HR24, 6:HA24
+uint32_t Graph_duree[NB_STRAT_CAPT];  // durée fenêtre graphique en secondes par stratégie
+uint8_t  strat_actif = 0;             // indice de la stratégie d'affichage active (0..NB_STRAT_CAPT-1)
 
 volatile uint8_t ackReceived = false;  // global pour indiquer que le peer a acké
 volatile int ackChannel = -1;       // canal où ça a marché
@@ -115,6 +132,7 @@ uint16_t err_Tint, err_Text, err_Heure;  // compteurs d'erreurs
 #endif
 
 int readLastLogsG(int nombre);
+void init_capt_from_sd();
 
 
 void init_10_secondes()
@@ -280,6 +298,12 @@ void setup_2()
   #endif
 }
 
+void setup_3()
+{
+  //lecture des numeros de capteurs de temp sur la carte SD
+  init_capt_from_sd();
+}
+
 void enreg_24h(uint8_t)
 {
 }
@@ -294,83 +318,133 @@ void init_rtc_variables_appli()
 
 void init_ram_variables_appli()
 {
+  for (uint8_t s = 0; s < NB_STRAT_CAPT; s++)
+  {
+    Graph_duree[s] = 4UL * 24 * 3600;  // 4 jours par défaut
+    for (uint8_t j = 0; j < NB_Graphique; j++)
+    {
+      Graph_capt[j][s] = 0;
+      Graph_val[j][s] = 0;
+    }
+  }
 }
 
 char* requete_status_appli(char *json_response, char *p, uint8_t type)
 {
+  Serial.printf("pointeur1 p: %p\n", p);
+
+  p += sprintf(p, "\"strat_actif\":%u,", strat_actif);
+  p += sprintf(p, "\"strat_duree\":%lu,", (unsigned long)Graph_duree[strat_actif]);
+
   if (!type)  // pas d'envoi des graphiques si type=1(maj)
   {
-    for (uint8_t i=0; i<NB_Graphique; i++) Graph_val[i] = 0;  // initialisation à 0
-    Graph_capt[0] = 'B';
-    Graph_val[0] = 1;
-    Graph_capt[1] = 'B';
-    Graph_val[1] = 2;
 
-    #ifdef Graph_Specifique
-      // Nota: les 0 sont sautés
-      uint8_t i,j;  // 10 car par valeur => 1000 car par graphique
+      uint8_t i, j;
+      time_t t_now;
+      time(&t_now);
+      uint32_t duree  = Graph_duree[strat_actif];
+      time_t   t_start = t_now - (time_t)duree;
+
+      Serial.printf("duree: %lu t_start: %lu\n", duree, t_start);
+
       for (j = 0; j < NB_Graphique; j++)
       {
-        // valeurs de temperature
-        if (Graph_val[j])   // graphiques actifs
+        uint8_t gv = Graph_val[j][strat_actif];
+        if (!gv) continue;   // graphique inactif
+
+        uint8_t adresse = Graph_capt[j][strat_actif];
+        
+        Serial.printf("Adresse graphique: %u\n", adresse);
+
+        if (adresse < '0' || adresse > 'z') {
+          Serial.printf("Adresse graphique invalide : %u\n", adresse);
+          continue;
+        }        
+        int16_t values[NB_Val_Graph];
+        memset(values, 0, sizeof(values));
+
+        bool is24h = (gv > 3);
+        String nomFichier = is24h
+          ? "/capteurs/Capteur24h_" + String((char)Graph_capt[j][strat_actif]) + ".csv"
+          : "/capteurs/Capteur_"    + String((char)Graph_capt[j][strat_actif]) + ".csv";
+
+        File file = SD_MMC.open(nomFichier, FILE_READ);
+        if (!file) {
+          Serial.printf("Erreur ouverture %s\n", nomFichier.c_str());
+          continue;
+        }
+        Serial.printf("Ouverture du fichier %s\n", nomFichier.c_str());
+
+        // Lecture ligne par ligne et échantillonnage dans NB_Val_Graph slots temporels
+        while (file.available())
         {
-          int16_t values[NB_Val_Graph];
-          uint8_t valueCount = 0;
-          // ouverture du fichier du capteur associé au graphique
-          String nomFichier;
-          if(Graph_val[j] > 3) nomFichier = "/capteurs/Capteur24h_" + String((char)Graph_capt[j]) + ".csv";
-          else nomFichier = "/capteurs/Capteur_" + String((char)Graph_capt[j]) + ".csv";
+          String lineStr = file.readStringUntil('\n');
+          lineStr.trim();
+          if (lineStr.length() < 10) continue;
 
-          File file = SD_MMC.open(nomFichier, FILE_READ);
-          if (!file) {
-              Serial.println("Erreur ouverture fichier");
-              break; }
+          struct tm tm_val = {};
+          float ftemp = 0.0f, fhr = 0.0f, fha = 0.0f;
+          int emetteur = 0;
+          int parsed;
 
-          while (file.available())
-          {
-            String line = file.readStringUntil('\n');
-            line.trim();
-            float temperature;
-            float relativeHumidity;
-            if (sscanf(line.c_str(), "%*[^,],%*[^,],%f,%f",
-                       &temperature, &relativeHumidity) == 2)
-            {
-              float value;
-              if (Graph_val[j] == 1 || Graph_val[j] == 4)
-                value = temperature;
-              else if (Graph_val[j] == 2 || Graph_val[j] == 5)
-                value = relativeHumidity;
-              else
-                value = absoluteHumidity(temperature, relativeHumidity);
-
-              if (valueCount == NB_Val_Graph)
-                memmove(values, values + 1, (NB_Val_Graph - 1) * sizeof(values[0]));
-              else
-                valueCount++;
-              values[valueCount - 1] = (int16_t)round(value * 10.0f);
-            }
+          if (is24h) {
+            // Format: "YYYY-MM-DD HH,emetteur,temp,hr,ha"
+            parsed = sscanf(lineStr.c_str(), "%4d-%2d-%2d %2d,%d,%f,%f,%f",
+              &tm_val.tm_year, &tm_val.tm_mon, &tm_val.tm_mday, &tm_val.tm_hour,
+              &emetteur, &ftemp, &fhr, &fha);
+            if (parsed < 7) continue;
+          } else {
+            // Format: "YYYY-MM-DD HH:MM:SS,emetteur,temp,hr"
+            parsed = sscanf(lineStr.c_str(), "%4d-%2d-%2d %2d:%2d:%2d,%d,%f,%f",
+              &tm_val.tm_year, &tm_val.tm_mon, &tm_val.tm_mday,
+              &tm_val.tm_hour, &tm_val.tm_min, &tm_val.tm_sec,
+              &emetteur, &ftemp, &fhr);
+            if (parsed < 8) continue;
           }
 
-          for (i = 0; i < valueCount; i++)
-          {
-            int16_t val = values[valueCount - 1 - i];
-            if (val)
-            {
-              int remaining = MAX_DUMP - (p - json_response) -2;
-              int n = snprintf(p, remaining, "\"T%d%d\":%i,", j, i, val);
-              if (n >= remaining || n < 0) {
-                break;
-              }
-              p+=n;
-            }
+          tm_val.tm_year -= 1900;
+          tm_val.tm_mon  -= 1;
+          tm_val.tm_isdst = -1;
+          time_t t_line = mktime(&tm_val);
+
+          if (t_line < t_start || t_line > t_now) continue;
+
+          // Slot : 0 = le plus ancien (t_start), NB_Val_Graph-1 = le plus récent (t_now)
+          long dt   = (long)(t_line - t_start);
+          int  slot = (int)((long long)dt * (NB_Val_Graph - 1) / (long long)duree);
+          if (slot < 0)             slot = 0;
+          if (slot >= NB_Val_Graph) slot = NB_Val_Graph - 1;
+
+          float fval;
+          switch (gv) {
+            case 1: case 4: fval = ftemp; break;
+            case 2: case 5: fval = fhr;   break;
+            case 3:         fval = absoluteHumidity(ftemp, fhr); break;
+            case 6:         fval = (parsed >= 8) ? fha : absoluteHumidity(ftemp, fhr); break;
+            default: continue;
           }
-          file.close();
+          values[slot] = (int16_t)(fval * 10.0f);
+          Serial.printf("Slot calculé: %d gv: %d valeur: %.2f\n", slot, gv, fval);
+        }
+        file.close();
+
+        // Émission JSON : T{j}{0} = valeur la plus récente (slot NB_Val_Graph-1)
+        for (i = 0; i < NB_Val_Graph; i++)
+        {
+          int16_t val = values[NB_Val_Graph - 1 - i];  // renversé : i=0 → slot le plus récent
+          if (val)
+          {
+            int remaining = MAX_DUMP - (p - json_response) - 2;
+            int n = snprintf(p, remaining, "\"T%d%d\":%i,", j, i, val);
+            if (n >= remaining || n < 0) break;
+            p += n;
+          }
         }
       }
 
-    #endif
   }
 
+  Serial.printf("pointeur2 p: %p\n", p);
   return p;
 }
 
@@ -380,6 +454,92 @@ void appli_event_on(systeme_eve_t evt)
 
 void appli_event_off(systeme_eve_t evt)
 {
+}
+
+
+
+// Lit /capteurs/ sur la SD et remplit Capt[] avec les fichiers Capteur_X trouvés.
+// Les entrées sont triées par date de dernière modification décroissante (plus récent en premier),
+// puis numérotées avec ordre=100, 101, ...
+void init_capt_from_sd()
+{
+  // init tableau
+   for (uint8_t i = 0; i < NB_CAPT_AFF; i++) {
+    Capt[i].actif     = 1;  // inactif
+   }
+  // Structures temporaires pour trier par date (date desc = plus récent d'abord)
+  struct CaptEntry {
+    uint8_t adresse;
+    time_t  last_write;
+  };
+  CaptEntry entries[NB_CAPT_AFF];
+  uint8_t count = 0;
+
+  memset(Capt, 0, sizeof(Capt));
+
+  File dir = SD_MMC.open("/capteurs");
+  if (!dir || !dir.isDirectory()) {
+    Serial.println("init_capt_from_sd: répertoire /capteurs introuvable");
+    return;
+  }
+
+  File entry = dir.openNextFile();
+  while (entry && count < NB_CAPT_AFF) {
+    if (!entry.isDirectory()) {
+      const char *name = entry.name();
+      // Cherche le pattern "Capteur_X" (X = 1 caractère alphanumérique)
+      const char *prefix = "Capteur_";
+      const char *p = strstr(name, prefix);
+      if (p) {
+        char addrChar = p[strlen(prefix)];
+        // Le nom de fichier peut avoir une extension — on vérifie que c'est bien le bon motif
+        char next = p[strlen(prefix) + 1];
+        if (addrChar != '\0' && (next == '\0' || next == '.')) {
+          entries[count].adresse    = (uint8_t)addrChar;
+          entries[count].last_write = (time_t)entry.getLastWrite();
+          count++;
+        }
+      }
+    }
+    entry.close();
+    entry = dir.openNextFile();
+  }
+  dir.close();
+  nb_capt_sdcard = count;
+  Serial.printf("init_capt_from_sd: %d capteurs trouvés sur la SD\n", nb_capt_sdcard);
+
+  // Tri à bulles décroissant sur last_write (plus récent = ordre le plus bas)
+  for (uint8_t i = 0; i < count; i++) {
+    for (uint8_t j = i + 1; j < count; j++) {
+      if (entries[j].last_write > entries[i].last_write) {
+        CaptEntry tmp = entries[i];
+        entries[i]    = entries[j];
+        entries[j]    = tmp;
+      }
+    }
+  }
+
+  // Remplissage de Capt[]
+  for (uint8_t i = 0; i < count; i++) {
+    Capt[i].adresse   = entries[i].adresse;
+    Capt[i].categorie = 1; // temp
+    Capt[i].actif     = 2; // actif
+    Capt[i].ordre     = 100 + i;
+
+    // Lecture du nom en NVS : clé "nc_X" (X = adresse du capteur)
+    char nvs_key[5];
+    snprintf(nvs_key, sizeof(nvs_key), "nc_%c", (char)entries[i].adresse);
+    String nom = preferences_nvs.getString(nvs_key, "");
+    if (nom.length() > 0) {
+      strncpy((char*)Capt[i].nom_capt, nom.c_str(), sizeof(Capt[i].nom_capt) - 1);
+      Capt[i].nom_capt[sizeof(Capt[i].nom_capt) - 1] = '\0';
+    } else {
+      // Nom par défaut si absent du NVS
+      snprintf((char*)Capt[i].nom_capt, sizeof(Capt[i].nom_capt), "Capt_%c", (char)entries[i].adresse);
+    }
+  }
+
+  Serial.printf("init_capt_from_sd: %d capteurs chargés\n", count);
 }
 
 // type 1
@@ -395,6 +555,10 @@ uint8_t requete_Get_appli(const char* var, float *valeur)
   if (strncmp(var, "Text",5) == 0) {
     res = 0;
     *valeur = Text;
+  }
+  if (strcmp(var, "strat_actif") == 0) {
+    res = 0;
+    *valeur = strat_actif;
   }
   if (strncmp(var, "codeR_pac",10) == 0) {
     res = 0;
@@ -414,7 +578,21 @@ uint8_t requete_Set_appli (String param, float valf)
   uint8_t res=1;
   int8_t val = round(valf);
 
+  if (param == "strat_actif" && val >= 0 && val < NB_STRAT_CAPT)
+  {
+    strat_actif = (uint8_t)val;
+    res = 0;
+  }
 
+  else if (param == "strat_duree")
+  {
+    uint32_t sec = (uint32_t)roundf(valf);
+    if (sec >= 6UL * 3600 && sec <= 365UL * 24 * 3600)
+    {
+      Graph_duree[strat_actif] = sec;
+      res = 0;
+    }
+  }
   return res;
 }
 
@@ -473,8 +651,61 @@ uint8_t requete_Set_String_appli(int param, const char *texte)
   uint8_t res=1;
   IPAddress ip;
 
+  // Noms des capteurs : param 148 = adresse '0' (ASCII 48), 149 = '1', etc.
+  // adresse = (char)(param - 100)
+  if (param >= 148 && param <= (148 + 'z' - '0'))
+  {
+    char adresse = (char)(param - 100);
+
+    // Sauvegarde en NVS
+    char nvs_key[5];
+    snprintf(nvs_key, sizeof(nvs_key), "nc_%c", adresse);
+    preferences_nvs.putString(nvs_key, texte);
+
+    // Mise à jour en RAM dans Capt[]
+    for (uint8_t i = 0; i < NB_CAPT_AFF; i++)
+    {
+      if (Capt[i].adresse == (uint8_t)adresse)
+      {
+        strncpy((char*)Capt[i].nom_capt, texte, sizeof(Capt[i].nom_capt) - 1);
+        Capt[i].nom_capt[sizeof(Capt[i].nom_capt) - 1] = '\0';
+        break;
+      }
+    }
+    Serial.printf("nom capteur '%c' => \"%s\"\n", adresse, texte);
+    res = 0;
+  }
 
   return res;
+}
+
+void requete_GetStrat(uint8_t strat, char* buf, size_t size)
+{
+  if (strat >= NB_STRAT_CAPT) { snprintf(buf, size, "{\"err\":1}"); return; }
+  int pos = 0;
+  pos += snprintf(buf+pos, size-pos, "{\"nb\":%d,\"NB_G\":%d,\"NB_S\":%d,\"caps\":[",
+                  nb_capt_sdcard, NB_Graphique, NB_STRAT_CAPT);
+  for (uint8_t i = 0; i < nb_capt_sdcard && i < NB_CAPT_AFF && pos < (int)size-60; i++) {
+    if (i) pos += snprintf(buf+pos, size-pos, ",");
+    pos += snprintf(buf+pos, size-pos, "{\"a\":%d,\"n\":\"%s\",\"o\":%d}",
+                    Capt[i].adresse, (char*)Capt[i].nom_capt, Capt[i].ordre);
+  }
+  pos += snprintf(buf+pos, size-pos, "],\"g\":[");
+  for (uint8_t i = 0; i < NB_Graphique && pos < (int)size-20; i++) {
+    if (i) pos += snprintf(buf+pos, size-pos, ",");
+    pos += snprintf(buf+pos, size-pos, "[%d,%d]", Graph_capt[i][strat], Graph_val[i][strat]);
+  }
+  snprintf(buf+pos, size-pos, "]}");
+}
+
+void requete_SetStrat(uint8_t strat, uint8_t* caps, uint8_t* vals, uint8_t nb)
+{
+  if (strat >= NB_STRAT_CAPT) return;
+  uint8_t fill = (nb < (uint8_t)NB_Graphique) ? nb : (uint8_t)NB_Graphique;
+  for (uint8_t i = 0; i < NB_Graphique; i++) {
+    Graph_capt[i][strat] = (i < fill) ? caps[i] : 0;
+    Graph_val[i][strat]  = (i < fill) ? vals[i] : 0;
+  }
 }
 
 void event_cycle()

@@ -114,6 +114,11 @@ const char index_html[] PROGMEM = R"rawliteral(
 .dropdown div:hover {
     background-color: #eee;
 }
+  #strat-status { font-size:13px; color:#8f8; margin-left:8px; min-height:16px; }
+  #strat-wrap { overflow-x:auto; margin-top:6px; }
+  table.strat-tbl { width:100%; border-collapse:collapse; font-size:13px; background:#222; }
+  table.strat-tbl th, table.strat-tbl td { border:1px solid #555; padding:3px 5px; text-align:center; white-space:nowrap; }
+  table.strat-tbl input[type=number] { width:46px; background:#333; color:#fff; border:1px solid #666; text-align:center; }
 </style>
 </head>
 <body>
@@ -452,7 +457,7 @@ const char index_html[] PROGMEM = R"rawliteral(
                   35 : longitude<br>
                   40 : esp_now actif<br>
                   41 : canal wifi <br>
-                  42 : canal wifi prérentiel (sonde)<brW
+                  42 : canal wifi prérentiel (sonde)<br>
                   <br>
 
               <div class="input-group" id="set-regT-group">
@@ -490,6 +495,9 @@ const char index_html[] PROGMEM = R"rawliteral(
                   58 : websocket<br>
                   59 : websock id<br>
                   60 : (L)adresse Mac ce module<br>
+                  165: nom adresse 'A'<br>
+                  197 : nom adresse 'a'<br>
+              <br>
 
 
             <div>
@@ -514,6 +522,31 @@ const char index_html[] PROGMEM = R"rawliteral(
             <pre id="actionResult"></pre>
 
           </section>          
+
+          <hr style="width:150px">
+          <label for="nav-toggle-strat" class="toggle-section-label">&#9776;&nbsp;&nbsp;Strat&eacute;gie graphiques</label>
+          <input type="checkbox" id="nav-toggle-strat" class="hidden toggle-section-button" checked="checked">
+          <section class="toggle-section">
+            <div class="input-group" style="margin-bottom:4px">
+              <label for="strat-sel">Strat&eacute;gie&nbsp;:</label>
+              <select id="strat-sel"><option value="1">Strat. 1</option></select>
+            </div>
+            <div id="strat-wrap"></div>
+            <div class="input-group" style="margin-bottom:4px">
+              <label for="strat-duree-val">Dur&eacute;e&nbsp;:</label>
+              <input type="number" id="strat-duree-val" min="1" max="999" style="width:60px">
+              <select id="strat-duree-unit">
+                <option value="3600">heures</option>
+                <option value="86400">jours</option>
+                <option value="2592000">mois</option>
+              </select>
+            </div>
+            <div style="margin-top:8px;display:flex;align-items:center">
+              <button id="strat-save-btn" style="display:none">&#128190; Enregistrer</button>
+              <span id="strat-status"></span>
+            </div>
+          </section>
+
         </div>
       </div>
 
@@ -916,6 +949,13 @@ const char index_html[] PROGMEM = R"rawliteral(
             VisibiliteGroup("jusque-group", parseInt(state.fo_jus));
         }
 
+        if (state.strat_actif !== undefined && window.setActiveStrategy) {
+            window.setActiveStrategy(Number(state.strat_actif));
+        }
+        if (state.strat_duree !== undefined && window.setStratDuree) {
+            window.setStratDuree(Number(state.strat_duree));
+        }
+
         for (var j =0; j<6; j++)
         {
           for (var i =0; i<NB_Val_Graph; i++)
@@ -1013,7 +1053,162 @@ const char index_html[] PROGMEM = R"rawliteral(
         }
         maj=1; // => pas de graphique
       }
+
+    // ===== Stratégie d'affichage =====
+    (function() {
+      const COL_LABELS = ['T', 'HR', 'HA', 'T24', 'HR24', 'HA24'];
+      let stratData = null;
+      let statusStrat = null;
+      const stratSel     = document.getElementById('strat-sel');
+      const stratWrap    = document.getElementById('strat-wrap');
+      const stratSaveBtn = document.getElementById('strat-save-btn');
+      const stratStatus  = document.getElementById('strat-status');
+      if (!stratSel) return;
+
+      const dureeVal    = document.getElementById('strat-duree-val');
+      const dureeUnit   = document.getElementById('strat-duree-unit');
+
+      const updateDureeField = (seconds) => {
+        if (!dureeVal || !dureeUnit) return;
+        let unit, val;
+        if (seconds >= 25 * 24 * 3600) {          // >= 25 jours → mois
+          unit = 2592000; val = Math.round(seconds / 2592000);
+        } else if (seconds >= 24 * 3600) {        // >= 1 jour → jours
+          unit = 86400;   val = Math.round(seconds / 86400);
+        } else {                                   // heures
+          unit = 3600;    val = Math.round(seconds / 3600);
+        }
+        dureeUnit.value = String(unit);
+        dureeVal.value  = val;
+      };
+
+      window.setStratDuree = (seconds) => { updateDureeField(seconds); };
+
+      const loadStrat = () => {
+        const strat = statusStrat !== null
+          ? statusStrat
+          : parseInt(stratSel.value) - 1;
+        fetch(`${baseHost}/GetStrat?strat=${strat}`)
+          .then(r => r.json())
+          .then(data => {
+            stratData = data;
+            if (stratSel.options.length !== data.NB_S) {
+              const selectedBeforeRebuild = stratSel.value;
+              stratSel.innerHTML = '';
+              for (let i = 1; i <= data.NB_S; i++) {
+                const o = document.createElement('option');
+                o.value = i; o.text = 'Stratégie ' + i;
+                if (i === parseInt(selectedBeforeRebuild)) o.selected = true;
+                stratSel.appendChild(o);
+              }
+            }
+            if (statusStrat !== null) {
+              stratSel.value = String(statusStrat + 1);
+              statusStrat = null;
+            }
+            renderStratTable(data);
+            stratSaveBtn.style.display = 'inline-block';
+            stratStatus.textContent = '';
+          })
+          .catch(() => { stratStatus.textContent = '❌ Erreur chargement'; });
+      };
+
+      window.setActiveStrategy = (strat) => {
+        if (!Number.isInteger(strat) || strat < 0) return;
+        statusStrat = strat;
+        if (stratSel.options.length > strat) {
+          stratSel.value = String(strat + 1);
+        }
+        loadStrat();
+      };
+
+      const renderStratTable = (data) => {
+        const active = new Set();
+        (data.g || []).forEach(s => { if (s[1] > 0) active.add(s[0] + '_' + s[1]); });
+
+        const caps = (data.caps || []).slice().sort((a, b) => a.o - b.o);
+        let h = '<table class="strat-tbl"><thead><tr><th>Adr</th><th>Nom</th><th>Ordre</th>';
+        COL_LABELS.forEach(l => { h += `<th>${l}</th>`; });
+        h += '</tr></thead><tbody>';
+        caps.forEach(cap => {
+          const adr = String.fromCharCode(cap.a);
+          h += `<tr>`;
+          h += `<td>${adr}</td>`;
+          h += `<td style="text-align:left;padding:2px 6px">${cap.n}</td>`;
+          h += `<td><input type="number" class="s-ord" data-a="${cap.a}" value="${cap.o}" min="0" max="255"></td>`;
+          for (let v = 1; v <= 6; v++) {
+            const chk = active.has(cap.a + '_' + v) ? ' checked' : '';
+            h += `<td><input type="checkbox" class="s-cb" data-a="${cap.a}" data-v="${v}"${chk}></td>`;
+          }
+          h += '</tr>';
+        });
+        h += '</tbody></table>';
+        stratWrap.innerHTML = h;
+      };
+
+      const saveStrat = () => {
+        if (!stratData) return;
+        const ordres = {};
+        document.querySelectorAll('.s-ord').forEach(el => {
+          ordres[el.dataset.a] = parseInt(el.value);
+        });
+        const sel = [];
+        document.querySelectorAll('.s-cb:checked').forEach(el => {
+          const addr = parseInt(el.dataset.a);
+          const ord  = (ordres[addr] !== undefined) ? ordres[addr] : 200;
+          sel.push({ o: ord, a: addr, v: parseInt(el.dataset.v) });
+        });
+        sel.sort((a, b) => (a.o !== b.o) ? a.o - b.o : a.v - b.v);
+
+        const NB_G  = stratData.NB_G || 10;
+        const strat = parseInt(stratSel.value) - 1;
+        const nb    = Math.min(sel.length, NB_G);
+        const dureeUnitValue = parseInt(dureeUnit.value);
+        const dureeValue = parseInt(dureeVal.value);
+        const dureeSeconds = dureeValue * dureeUnitValue;
+        if (isNaN(dureeValue) || dureeValue < 1 ||
+            dureeSeconds < 6 * 3600 || dureeSeconds > 365 * 24 * 3600) {
+          stratStatus.textContent = '⚠️ Durée hors plage (6h–1an)';
+          return;
+        }
+
+        let url = `${baseHost}/SetStrat?strat=${strat}&nb=${nb}`;
+        for (let i = 0; i < nb; i++) url += `&c${i}=${sel[i].a}&v${i}=${sel[i].v}`;
+
+        fetch(url)
+          .then(r => r.json())
+          .then(d => {
+            if (d.res !== 0) throw new Error('Erreur enregistrement stratégie');
+            return fetch(`${baseHost}/Set?type=1&reg=strat_duree&val=${dureeSeconds}`);
+          })
+          .then(r => r.json())
+          .then(d => {
+            stratStatus.textContent = (d.res === 0) ? '✅ Enregistré' : '❌ Erreur durée';
+            setTimeout(() => { stratStatus.textContent = ''; }, 3000);
+          })
+          .catch(() => { stratStatus.textContent = '❌ Erreur réseau'; });
+      };
+
+      stratSel.addEventListener('change', () => {
+        statusStrat = null;
+        const strat = parseInt(stratSel.value) - 1;
+        fetch(`${baseHost}/Set?type=1&reg=strat_actif&val=${strat}`)
+          .then(response => {
+            if (!response.ok) throw new Error('Erreur mise à jour stratégie active');
+            return response.json();
+          })
+          .then(() => loadStrat())
+          .catch(() => { stratStatus.textContent = '❌ Erreur stratégie active'; });
+      });
+      stratSaveBtn.addEventListener('click', saveStrat);
+
+      // Chargement automatique à la première ouverture du menu
+      const tog = document.getElementById('nav-toggle-strat');
+      if (tog) tog.addEventListener('change', function() { if (!this.checked && !stratData) loadStrat(); });
+    })();
+
     })
+
 
     function dessine_graphe(canvasId, dataOffset, divider, colors)
     {

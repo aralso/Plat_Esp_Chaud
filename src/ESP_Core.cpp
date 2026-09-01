@@ -1588,11 +1588,11 @@ void setup()
 
   setup_1();  // --------------   initialisation sonde temperature--10ms----------
 
-   if (log_detail>=3) Serial.printf("milli G: %lu\n\r", millis());
+   if (log_detail>=4) Serial.printf("milli G: %lu\n\r", millis());
 
    setup_appli();
 
-   if (log_detail>=3) Serial.printf("milli G2: %lu\n\r", millis());
+   if (log_detail>=4) Serial.printf("milli G2: %lu\n\r", millis());
 
   // -------------- partition "log_flash" custom  pour Write-log -------------------
 
@@ -1768,7 +1768,7 @@ void setup()
         }
         else Serial.println("Wifi pas ok");
       }
-      if (log_detail>=2) Serial.printf("milli J2: %lu\n\r", millis());
+      if (log_detail>=4) Serial.printf("milli J2: %lu\n\r", millis());
 
       // Protection UART après connexion WiFi
       //protectUARTDuringWiFi();
@@ -1891,6 +1891,8 @@ void setup()
   #endif
 
   //WiFi.setSleep(true);
+
+  setup_3();
 
   Serial.printf("fin setup: %i ms\n\r", millis());
 
@@ -3381,27 +3383,32 @@ void requete_status(char *json_response, uint8_t socket, uint8_t type)
   // ajout des paramètres de l'application
   p = requete_status_appli(json_response, p, type);
 
-  // Tableaux : E(erreurs) T(temp)
-  if (!type)  // pas d'envoi des graphiques si type=1(maj)
-  {
-    // Nota: les 0 sont sautés
-    uint8_t i,j;  // 10 car par valeur => 1000 car par graphique
-    for (j = 0; j < NB_Graphique; j++) {
-      // valeurs de temperature
-      for (i = 0; i < NB_Val_Graph; i++) {
-        //printf("val %d : %u\n\r",i, temp_pisc_hist[i]);
-        if (graphique[i][j]) {
-          int remaining = MAX_DUMP - (p - json_response) -2;
-          int n = snprintf(p, remaining, "\"T%d%d\":%i,", j, i, graphique[i][j]);
-          if (n >= remaining || n < 0) {
-          // Plus assez de place dans le buffer ou erreur
-            break;
+  p += sprintf(p, "\"TintV\":%i,", TintV);  // Temp ext de la veille
+
+  #ifndef Graph_Specifique
+
+    // Tableaux : E(erreurs) T(temp)
+    if (!type)  // pas d'envoi des graphiques si type=1(maj)
+    {
+      // Nota: les 0 sont sautés
+      uint8_t i,j;  // 10 car par valeur => 1000 car par graphique
+      for (j = 0; j < NB_Graphique; j++) {
+        // valeurs de temperature
+        for (i = 0; i < NB_Val_Graph; i++) {
+          //printf("val %d : %u\n\r",i, temp_pisc_hist[i]);
+          if (graphique[i][j]) {
+            int remaining = MAX_DUMP - (p - json_response) -2;
+            int n = snprintf(p, remaining, "\"T%d%d\":%i,", j, i, graphique[i][j]);
+            if (n >= remaining || n < 0) {
+            // Plus assez de place dans le buffer ou erreur
+              break;
+            }
+            p+=n;
           }
-          p+=n;
         }
       }
     }
-  }
+  #endif
 
   // Tableaux : log erreurs
   uint8_t i;
@@ -4730,6 +4737,35 @@ server.on("/verif", HTTP_GET, [](AsyncWebServerRequest *request){
     request->send(200, "application/json", buffer_dmp);
   });
 
+
+  server.on("/GetStrat", HTTP_GET, [](AsyncWebServerRequest *request) {
+    uint8_t strat = 0;
+    if (request->hasParam("strat"))
+      strat = (uint8_t)request->getParam("strat")->value().toInt();
+    static char json_strat[1600];
+    requete_GetStrat(strat, json_strat, sizeof(json_strat));
+    request->send(200, "application/json", json_strat);
+  });
+
+  server.on("/SetStrat", HTTP_GET, [](AsyncWebServerRequest *request) {
+    if (!request->hasParam("strat") || !request->hasParam("nb")) {
+      request->send(400, "text/plain", "params manquants"); return;
+    }
+    uint8_t strat = (uint8_t)request->getParam("strat")->value().toInt();
+    uint8_t nb    = (uint8_t)request->getParam("nb")->value().toInt();
+    if (nb > NB_Graphique) nb = NB_Graphique;
+    uint8_t caps[NB_Graphique] = {};
+    uint8_t vals[NB_Graphique] = {};
+    char key[5];
+    for (uint8_t i = 0; i < nb; i++) {
+      snprintf(key, sizeof(key), "c%d", i);
+      if (request->hasParam(key)) caps[i] = (uint8_t)request->getParam(key)->value().toInt();
+      snprintf(key, sizeof(key), "v%d", i);
+      if (request->hasParam(key)) vals[i] = (uint8_t)request->getParam(key)->value().toInt();
+    }
+    requete_SetStrat(strat, caps, vals, nb);
+    request->send(200, "application/json", "{\"res\":0}");
+  });
 
   server.onNotFound([](AsyncWebServerRequest *request) {
     request->send(404, "text/plain", "Not found");
