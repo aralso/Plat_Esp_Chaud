@@ -126,6 +126,14 @@ uint8_t init_masquage=1;
 
 uint8_t envoi_data_gateway(Message_EspNow mess_esp);
 uint8_t parseMacString(const char* str, uint8_t mac[6]);
+void traitement_espnow_recv(EspNowRecvMsg_t &recv);
+void setup_0();
+void setup_nvs();
+void setup_1();
+void setup_2();
+void setup_3();
+void setupRoutes_appli();
+uint8_t connectWiFiWithDiagnostic();
 
 // variable globale de 4000c en RAM pour dump log et autres requetes
 char buffer_dmp[MAX_DUMP];  // max 250 logs, 16 octets chacun
@@ -424,7 +432,7 @@ void requete_status(char *json_response, uint8_t socket, uint8_t type);
 uint8_t requete_Set(uint8_t type, const char* param, const char* valStr);
 uint8_t requete_Get(uint8_t type, const char* var, float *valeur);
 uint8_t requete_Get_String (uint8_t type, String var, char *valeur);
-uint8_t requete_SetReg(int param, float valeurf);
+uint8_t requete_SetReg(int param, float valeurf, uint8_t secu);
 uint8_t requete_SetRegM(uint8_t param, int valeur);
 uint8_t requete_Set_String(int param, const char *texte);
 uint8_t requete_Set_Action(const char *reg, const char *data);
@@ -759,7 +767,7 @@ void taskHandler(void *parameter) {
                       xTimerStop(xTimer_Init,100); // arret
                     else
                     {
-                      Serial.println("verification de l'heure");
+                      if (log_detail>=3) Serial.println("verification de l'heure");
                       // Serial.flush();
                       init_time_ps();
                       if (init_time>=3)  xTimerStop(xTimer_Init,100); // arret
@@ -1270,6 +1278,7 @@ void setup()
 
   uint32_t t = millis();
   if (boot_rapide < 2) delay(3000);
+  if (!boot_rapide) delay(10000);
 
 
   // Cause reset :
@@ -1517,17 +1526,19 @@ void setup()
     // lecture de tous les paramètres nvs uint8_t, uint16_t, uint32_t(IP) et string
     for (size_t i = 0; i < PARAMS_COUNT; ++i) {
       nvs_read(PARAMS[i]);
-      if (i==1)  // log_detail
+      if (PARAMS[i].order==1)  // log_detail
       {
           apply_log_detail(log_detail);
           Serial.printf("log_detail:%i\n\r", log_detail);
       }
-      if (i==61) // adresse Mac Gateway
+      if (PARAMS[i].order==61) // adresse Mac Gateway
       {
         if (!parseMacString(mac_gw_str, mac_gw))
         {
-            Serial.println("MAC Serveur invalide");
+          Serial.println("MAC Serveur invalide");
         }
+        else 
+          if (log_detail>=3) Serial.printf("MAC Serveur valide : %X:%X:%X:%X:%X:%X\n\r", mac_gw[0], mac_gw[1], mac_gw[2], mac_gw[3], mac_gw[4], mac_gw[5]);
 
       }
     }
@@ -1900,6 +1911,30 @@ void setup()
     esp_task_wdt_delete(NULL); // desinscription de la tache setup/loop de la surveillance watchdog : permet d'éviter le reset_wdt dans la tache loop
   #endif
 
+}
+
+uint8_t parseMacString(const char* str, uint8_t mac[6])
+{
+  if (str == nullptr || mac == nullptr) {
+    return false;
+  }
+
+  unsigned int v[6];
+
+  if (sscanf(str, "%x:%x:%x:%x:%x:%x",
+             &v[0], &v[1], &v[2],
+             &v[3], &v[4], &v[5]) != 6) {
+    return false;
+  }
+
+  for (int i = 0; i < 6; ++i) {
+    if (v[i] > 0xFF) {
+      return false;
+    }
+    mac[i] = static_cast<uint8_t>(v[i]);
+  }
+
+  return true;
 }
 
 void heartBeatPrint()
@@ -2357,7 +2392,7 @@ uint8_t requete_Set(uint8_t type, const char* param, const char* valStr)
 
   if (type==2)  // set registre
   {
-    res = requete_SetReg(paramV, valf);
+    res = requete_SetReg(paramV, valf, cpt_securite);
   }
   if (type==3)  // set registre Modbus
   {
@@ -2370,6 +2405,7 @@ uint8_t requete_Set(uint8_t type, const char* param, const char* valStr)
   {
     res = requete_Set_Action(param, valStr);     
   }
+  // type 1 SET
   if (type==1)  // set variable
   {
     if (cpt_securite) {
@@ -3087,14 +3123,14 @@ uint8_t requete_GetReg(int reg, float *valeur) {
 }
 
 // type 2
-uint8_t requete_SetReg(int param, float valeurf)
+uint8_t requete_SetReg(int param, float valeurf, uint8_t secu)
 {
   int32_t valeur = int32_t(valeurf);
   uint8_t res = 1;
   uint8_t res2= 1;
 
 
-  if (cpt_securite)
+  if (secu)
   {
     // Keep special-case behavior for reset (param 3)
     if (param == 4)  // registre 4 : reset par watchdog
@@ -3427,7 +3463,7 @@ void requete_status(char *json_response, uint8_t socket, uint8_t type)
   uint32_t nb_car;
   nb_car = (uint32_t)p - (uint32_t)json_response;
   //nb_car = *p - nb_car;
-  Serial.printf("nb car status:%lu  max:%i\n\r", (uint32_t)nb_car, MAX_DUMP);
+  if (log_detail>=4)Serial.printf("nb car status:%lu  max:%i\n\r", (uint32_t)nb_car, MAX_DUMP);
   if ((nb_car) >= MAX_DUMP-2)  // erreur dépassement de tableau
   {
     uint8_t depass;
@@ -4220,8 +4256,8 @@ void init_time_ps()
   }
   else  // lecture correcte de l'heure : Nota : si l'heure/date est mise à jour manuellement, alors "ok init time"
   {
-    Serial.println("ok init time");
-    Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
+    if (log_detail>=3) Serial.println("ok init time");
+    if (log_detail>=2) Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
     init_time = 3;
     //delay(2000 + random(1, 1001) );
     writeLog('S', 1, init_time, 0, "Ini-heur");
@@ -4661,6 +4697,8 @@ server.on("/verif", HTTP_GET, [](AsyncWebServerRequest *request){
         if (type==4) res2 = requete_Get_String(type, reg.c_str(), valeur_S);
 
       *p++ = '{';
+      p += snprintf(p, JSON_BUF_SIZE - (p - json_response) - 1,
+                    "\"res\":%d,", (res == 0 && res2 == 0) ? 0 : 1);
       size_t espace = JSON_BUF_SIZE - (p - json_response) -2;
       if (type==1)  p += snprintf(p, espace, "\"reg\":\"%s\",", reg.c_str());
       if (type==2)  p += sprintf(p, "\"reg\":\"get-reg-value\",");
@@ -4737,35 +4775,7 @@ server.on("/verif", HTTP_GET, [](AsyncWebServerRequest *request){
     request->send(200, "application/json", buffer_dmp);
   });
 
-
-  server.on("/GetStrat", HTTP_GET, [](AsyncWebServerRequest *request) {
-    uint8_t strat = 0;
-    if (request->hasParam("strat"))
-      strat = (uint8_t)request->getParam("strat")->value().toInt();
-    static char json_strat[1600];
-    requete_GetStrat(strat, json_strat, sizeof(json_strat));
-    request->send(200, "application/json", json_strat);
-  });
-
-  server.on("/SetStrat", HTTP_GET, [](AsyncWebServerRequest *request) {
-    if (!request->hasParam("strat") || !request->hasParam("nb")) {
-      request->send(400, "text/plain", "params manquants"); return;
-    }
-    uint8_t strat = (uint8_t)request->getParam("strat")->value().toInt();
-    uint8_t nb    = (uint8_t)request->getParam("nb")->value().toInt();
-    if (nb > NB_Graphique) nb = NB_Graphique;
-    uint8_t caps[NB_Graphique] = {};
-    uint8_t vals[NB_Graphique] = {};
-    char key[5];
-    for (uint8_t i = 0; i < nb; i++) {
-      snprintf(key, sizeof(key), "c%d", i);
-      if (request->hasParam(key)) caps[i] = (uint8_t)request->getParam(key)->value().toInt();
-      snprintf(key, sizeof(key), "v%d", i);
-      if (request->hasParam(key)) vals[i] = (uint8_t)request->getParam(key)->value().toInt();
-    }
-    requete_SetStrat(strat, caps, vals, nb);
-    request->send(200, "application/json", "{\"res\":0}");
-  });
+  setupRoutes_appli();
 
   server.onNotFound([](AsyncWebServerRequest *request) {
     request->send(404, "text/plain", "Not found");
@@ -5164,4 +5174,11 @@ void OnDataSent(const uint8_t* mac_addr, esp_now_send_status_t status)
         ackReceived = true;
         ackChannel = WiFi.channel();  // canal courant
     }*/
+}
+
+float absoluteHumidity(float temperature, float relativeHumidity)
+{
+  return (1324.7f * relativeHumidity / 100.0f *
+          exp((17.67f * temperature) / (temperature + 243.5f))) /
+         (273.15f + temperature);
 }

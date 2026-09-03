@@ -1215,8 +1215,10 @@ const char index_html[] PROGMEM = R"rawliteral(
       var zone_dessin = document.getElementById(canvasId);
       var graphe= zone_dessin.getContext("2d");
       var compteur=0;
-      var vert_min = 35;
-      var vert_max = -10;
+      var min_graph = -10;
+      var max_graph = 100
+      var vert_min = max_graph;
+      var vert_max = min_graph;
       
       // Calcul min/max
       for (j=0; j<3; j++) {
@@ -1227,8 +1229,8 @@ const char index_html[] PROGMEM = R"rawliteral(
         }
       }
       
-      if (vert_min < -10) vert_min = -10;
-      if (vert_max > 35) vert_max = 35;
+      if (vert_min < min_graph) vert_min = min_graph;
+      if (vert_max > max_graph) vert_max = max_graph;
       vert_min = Math.floor(vert_min);
       vert_max = Math.ceil(vert_max);
           

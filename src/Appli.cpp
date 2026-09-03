@@ -24,6 +24,7 @@ TODO :
 #include <DHT.h>
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
+#include <ESPAsyncWebServer.h>
 
 #include "FS.h"
 #include "SD_MMC.h"
@@ -67,12 +68,8 @@ volatile uint8_t ackReceived = false;  // global pour indiquer que le peer a ack
 volatile int ackChannel = -1;       // canal où ça a marché
 uint8_t num_sequentiel;  // pour Ack
 
-float absoluteHumidity(float temperature, float relativeHumidity)
-{
-  return (13.247f * relativeHumidity / 100.0f *
-          exp((17.67f * temperature) / (temperature + 243.5f))) /
-         (273.15f + temperature);
-}
+extern AsyncWebServer server;
+
 
 void OnDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len);
 //void OnDataRecv(const uint8_t *mac, const uint8_t *data, int len);
@@ -85,6 +82,7 @@ void OnDataSent(const uint8_t* mac_addr, esp_now_send_status_t status);
 #endif
 
 uint8_t parseMacString(const char* str, uint8_t mac[6]);
+float absoluteHumidity(float temperature, float relativeHumidity);
 
 
 
@@ -312,6 +310,39 @@ void setup_appli()
 {
 }
 
+void setupRoutes_appli()
+{
+
+  server.on("/GetStrat", HTTP_GET, [](AsyncWebServerRequest *request) {
+    uint8_t strat = 0;
+    if (request->hasParam("strat"))
+      strat = (uint8_t)request->getParam("strat")->value().toInt();
+    static char json_strat[1600];
+    requete_GetStrat(strat, json_strat, sizeof(json_strat));
+    request->send(200, "application/json", json_strat);
+  });
+
+  server.on("/SetStrat", HTTP_GET, [](AsyncWebServerRequest *request) {
+    if (!request->hasParam("strat") || !request->hasParam("nb")) {
+      request->send(400, "text/plain", "params manquants"); return;
+    }
+    uint8_t strat = (uint8_t)request->getParam("strat")->value().toInt();
+    uint8_t nb    = (uint8_t)request->getParam("nb")->value().toInt();
+    if (nb > NB_Graphique) nb = NB_Graphique;
+    uint8_t caps[NB_Graphique] = {};
+    uint8_t vals[NB_Graphique] = {};
+    char key[5];
+    for (uint8_t i = 0; i < nb; i++) {
+      snprintf(key, sizeof(key), "c%d", i);
+      if (request->hasParam(key)) caps[i] = (uint8_t)request->getParam(key)->value().toInt();
+      snprintf(key, sizeof(key), "v%d", i);
+      if (request->hasParam(key)) vals[i] = (uint8_t)request->getParam(key)->value().toInt();
+    }
+    requete_SetStrat(strat, caps, vals, nb);
+    request->send(200, "application/json", "{\"res\":0}");
+  });
+}
+
 void init_rtc_variables_appli()
 {
 }
@@ -331,7 +362,7 @@ void init_ram_variables_appli()
 
 char* requete_status_appli(char *json_response, char *p, uint8_t type)
 {
-  Serial.printf("pointeur1 p: %p\n", p);
+  //Serial.printf("pointeur1 p: %p\n", p);
 
   p += sprintf(p, "\"strat_actif\":%u,", strat_actif);
   p += sprintf(p, "\"strat_duree\":%lu,", (unsigned long)Graph_duree[strat_actif]);
@@ -345,7 +376,7 @@ char* requete_status_appli(char *json_response, char *p, uint8_t type)
       uint32_t duree  = Graph_duree[strat_actif];
       time_t   t_start = t_now - (time_t)duree;
 
-      Serial.printf("duree: %lu t_start: %lu\n", duree, t_start);
+      //Serial.printf("duree: %lu t_start: %lu\n", duree, t_start);
 
       for (j = 0; j < NB_Graphique; j++)
       {
@@ -444,7 +475,7 @@ char* requete_status_appli(char *json_response, char *p, uint8_t type)
 
   }
 
-  Serial.printf("pointeur2 p: %p\n", p);
+  //Serial.printf("pointeur2 p: %p\n", p);
   return p;
 }
 
@@ -560,6 +591,10 @@ uint8_t requete_Get_appli(const char* var, float *valeur)
     res = 0;
     *valeur = strat_actif;
   }
+  if (strcmp(var, "strat_duree") == 0) {
+    res = 0;
+    *valeur = (float)Graph_duree[strat_actif];
+  }
   if (strncmp(var, "codeR_pac",10) == 0) {
     res = 0;
     if (cpt_securite)  *valeur=1;
@@ -635,15 +670,6 @@ uint8_t requete_Get_String_appli(uint8_t type, String var, char *valeur)
   return res;
 }
 
-uint8_t parseMacString(const char* str, uint8_t mac[6]) {
-  int v[6];
-  if (sscanf(str, "%x:%x:%x:%x:%x:%x",
-             &v[0], &v[1], &v[2], &v[3], &v[4], &v[5]) != 6) {
-    return false;
-  }
-  for (int i = 0; i < 6; i++) mac[i] = (uint8_t)v[i];
-  return true;
-}
 
 // type 4
 uint8_t requete_Set_String_appli(int param, const char *texte)
@@ -1076,20 +1102,22 @@ void traitement_espnow_recv(EspNowRecvMsg_t &recv) {
         uint8_t nb_valeurs = msg.payload[pos++];
         if ((res_node!=1) && nb_valeurs && nb_valeurs<NB_VAL_TAB)
         {
-          uint16_t Cap_temp[NB_VAL_TAB], Cap_hum[NB_VAL_TAB], Cap_ecart[NB_VAL_TAB];
-          uint16_t ecart_total=0;
+          uint16_t Cap_temp[NB_VAL_TAB], Cap_hum[NB_VAL_TAB];
+          uint32_t Cap_ecart[NB_VAL_TAB];
+
+          uint32_t ecart_total=0;
           for (uint8_t nb=0; nb<nb_valeurs; nb++)
           {
             Cap_temp[nb] = msg.payload[pos++] | (msg.payload[pos++] << 8);
             Cap_hum[nb] = msg.payload[pos++] | (msg.payload[pos++] << 8);
-            Cap_ecart[nb] = msg.payload[pos++] ;
+            Cap_ecart[nb] = (msg.payload[pos++] << 16) | (msg.payload[pos++] << 8) | msg.payload[pos++];
             if (nb) ecart_total += Cap_ecart[nb];
           }
           // timestamp actuel
           time_t timestamp;
           time(&timestamp);
-          // on retranche l'écart total(en minutes) pour retrouver le timestamp du premier message
-          timestamp -= ecart_total * 60;
+          // on retranche l'écart total(en 6s) pour retrouver le timestamp du premier message
+          timestamp -= ecart_total * 600;
           // enregistrement sur la carte SD, dans le fichier du capteur concerné
           String nomFichier = "/capteurs/Capteur_" + String((char)msg.emetteur) + ".csv";
           File file = SD_MMC.open(nomFichier, FILE_APPEND);
@@ -1107,7 +1135,7 @@ void traitement_espnow_recv(EspNowRecvMsg_t &recv) {
             file.printf("%s,%d,%.2f,%.2f\n", buffer, msg.emetteur, Cap_temp[nb]/100.0-40, Cap_hum[nb]/100.0);
             Serial.printf("   %s,%d,%.2f,%.2f\n", buffer, msg.emetteur, Cap_temp[nb]/100.0-40, Cap_hum[nb]/100.0);
             // incrémenter le timestamp pour le prochain message
-            if (nb < nb_valeurs - 1) timestamp += Cap_ecart[nb+1] * 60;
+            if (nb < nb_valeurs - 1) timestamp += Cap_ecart[nb+1] * 600;
           }
           file.close();
         }
