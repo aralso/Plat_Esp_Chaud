@@ -1278,7 +1278,7 @@ void setup()
 
   uint32_t t = millis();
   if (boot_rapide < 2) delay(3000);
-  if (!boot_rapide) delay(10000);
+  //if (!boot_rapide) delay(10000);
 
 
   // Cause reset :

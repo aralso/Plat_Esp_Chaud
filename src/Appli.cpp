@@ -60,7 +60,7 @@ RTC_NOINIT_ATTR uint16_t compteur_24h;
 
 S_Node Node[NB_CAPT];
 RTC_NOINIT_ATTR uint8_t Graph_capt[NB_Graphique][NB_STRAT_CAPT];  // tableau de correspondance entre graphique et capteur
-RTC_NOINIT_ATTR uint8_t Graph_val[NB_Graphique][NB_STRAT_CAPT];  // 0:pas de graphique, 1:temp 2:HR 3:HA 4:temp24 5:HR24, 6:HA24
+RTC_NOINIT_ATTR uint8_t Graph_val[NB_Graphique][NB_STRAT_CAPT];  // 0:pas de graphique, 1:temp 2:HR 3:HA 4:temp24 5:HR24 6:HA24 7:voltage
 uint32_t Graph_duree[NB_STRAT_CAPT];  // durée fenêtre graphique en secondes par stratégie
 uint8_t  strat_actif = 0;             // indice de la stratégie d'affichage active (0..NB_STRAT_CAPT-1)
 
@@ -414,15 +414,15 @@ char* requete_status_appli(char *json_response, char *p, uint8_t type)
           if (lineStr.length() < 10) continue;
 
           struct tm tm_val = {};
-          float ftemp = 0.0f, fhr = 0.0f, fha = 0.0f;
+          float ftemp = 0.0f, fhr = 0.0f, fha = 0.0f, fvoltage = 0.0f;
           int emetteur = 0;
           int parsed;
 
           if (is24h) {
-            // Format: "YYYY-MM-DD HH,emetteur,temp,hr,ha"
-            parsed = sscanf(lineStr.c_str(), "%4d-%2d-%2d %2d,%d,%f,%f,%f",
+            // Format: "YYYY-MM-DD HH,emetteur,temp,hr,ha,voltage"
+            parsed = sscanf(lineStr.c_str(), "%4d-%2d-%2d %2d,%d,%f,%f,%f,%f",
               &tm_val.tm_year, &tm_val.tm_mon, &tm_val.tm_mday, &tm_val.tm_hour,
-              &emetteur, &ftemp, &fhr, &fha);
+              &emetteur, &ftemp, &fhr, &fha, &fvoltage);
             if (parsed < 7) continue;
           } else {
             // Format: "YYYY-MM-DD HH:MM:SS,emetteur,temp,hr"
@@ -452,10 +452,11 @@ char* requete_status_appli(char *json_response, char *p, uint8_t type)
             case 2: case 5: fval = fhr;   break;
             case 3:         fval = absoluteHumidity(ftemp, fhr); break;
             case 6:         fval = (parsed >= 8) ? fha : absoluteHumidity(ftemp, fhr); break;
+            case 7:         if (parsed < 9) continue; fval = fvoltage; break;
             default: continue;
           }
           values[slot] = (int16_t)(fval * 10.0f);
-          Serial.printf("Slot calculé: %d gv: %d valeur: %.2f\n", slot, gv, fval);
+          if (log_detail>=4) Serial.printf("Slot calculé: %d gv: %d valeur: %.2f\n", slot, gv, fval);
         }
         file.close();
 
@@ -622,7 +623,7 @@ uint8_t requete_Set_appli (String param, float valf)
   else if (param == "strat_duree")
   {
     uint32_t sec = (uint32_t)roundf(valf);
-    if (sec >= 6UL * 3600 && sec <= 365UL * 24 * 3600)
+    if (sec >= 2UL * 3600 && sec <= 2UL * 365 * 24 * 3600)
     {
       Graph_duree[strat_actif] = sec;
       res = 0;
@@ -1001,13 +1002,13 @@ uint8_t conversion_node(uint8_t emetteur, uint8_t *node)
   for (uint8_t i = 0; i < NB_CAPT; i++) {
     if (Node[i].Add_node == emetteur) {
       *node = i;
-      Serial.printf("Node %c trouvé à l'index %d\n", emetteur, i);
+      if (log_detail>=3) Serial.printf("Node %c trouvé à l'index %d\n\r", emetteur, i);
       return 0; // Succès
     }
   }
   // verif s'il reste des places vides pour de nouveaux nodes
   for (uint8_t i = 0; i < NB_CAPT; i++) {
-    Serial.printf("add_node[%d] = %c\n", i, Node[i].Add_node);
+    if (log_detail>=2) Serial.printf("add_node[%d] = %c\n\r", i, Node[i].Add_node);
     if (Node[i].Add_node == 0) { // place vide
       Node[i].Add_node = emetteur;
       *node = i;
@@ -1073,8 +1074,8 @@ void traitement_espnow_recv(EspNowRecvMsg_t &recv) {
   uint8_t current_channel;
   wifi_second_chan_t second;
   esp_wifi_get_channel(&current_channel, &second);
-  if (log_detail>=3) Serial.printf("   Canal WiFi actuel: %d\n", current_channel);
-  if (log_detail>=3) Serial.printf("   Taille reçue: %d octets\n", len);
+  if (log_detail>=3) Serial.printf("   Canal WiFi actuel: %d\n\r", current_channel);
+  if (log_detail>=3) Serial.printf("   Taille reçue: %d octets\n\r", len);
 
   num_sequentiel = msg.num_seq;
   uint8_t renvoi_ack=0;
@@ -1082,6 +1083,7 @@ void traitement_espnow_recv(EspNowRecvMsg_t &recv) {
   for (uint8_t i = 0; i < len; i++) {
     if (log_detail>=2) Serial.printf("%02X ", ((uint8_t*)&msg)[i]);
   }
+    Serial.println();
 
   if ((msg.destinataire & 0x7F) == SERVER_ADD)
   {
@@ -1089,7 +1091,7 @@ void traitement_espnow_recv(EspNowRecvMsg_t &recv) {
     uint8_t res_node = conversion_node(msg.emetteur, &node);
     if (res_node==2)    memcpy(Node[node].mac_node, src_addr, 6);
 
-    if (log_detail>=3) Serial.printf("Message destiné au serveur de %c node:%i\n", msg.emetteur, res_node);
+    if (log_detail>=3) Serial.printf("Message destiné au serveur de %c node:%i\n\r", msg.emetteur, res_node);
 
     if (msg.code == 'C')
     {
@@ -1105,19 +1107,21 @@ void traitement_espnow_recv(EspNowRecvMsg_t &recv) {
           uint16_t Cap_temp[NB_VAL_TAB], Cap_hum[NB_VAL_TAB];
           uint32_t Cap_ecart[NB_VAL_TAB];
 
-          uint32_t ecart_total=0;
+
           for (uint8_t nb=0; nb<nb_valeurs; nb++)
           {
             Cap_temp[nb] = msg.payload[pos++] | (msg.payload[pos++] << 8);
             Cap_hum[nb] = msg.payload[pos++] | (msg.payload[pos++] << 8);
             Cap_ecart[nb] = (msg.payload[pos++] << 16) | (msg.payload[pos++] << 8) | msg.payload[pos++];
-            if (nb) ecart_total += Cap_ecart[nb];
           }
           // timestamp actuel
           time_t timestamp;
           time(&timestamp);
-          // on retranche l'écart total(en 6s) pour retrouver le timestamp du premier message
-          timestamp -= ecart_total * 600;
+          uint32_t timer_actuel = Cap_ecart[nb_valeurs-1];
+          if (log_detail>=3) Serial.printf("   Timer actuel: %lu\n", timer_actuel);
+
+          // on retranche le timer actuel(en 6s) pour retrouver le damarrage initial du capteur
+          timestamp -= timer_actuel * 6;
           // enregistrement sur la carte SD, dans le fichier du capteur concerné
           String nomFichier = "/capteurs/Capteur_" + String((char)msg.emetteur) + ".csv";
           File file = SD_MMC.open(nomFichier, FILE_APPEND);
@@ -1130,12 +1134,11 @@ void traitement_espnow_recv(EspNowRecvMsg_t &recv) {
           for (uint8_t nb=0; nb<nb_valeurs; nb++)
           {
             char buffer[50];
-            struct tm * timeinfo = localtime(&timestamp);
+            time_t timestampM = timestamp + Cap_ecart[nb] * 6;
+            struct tm * timeinfo = localtime(&timestampM);
             strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", timeinfo);
             file.printf("%s,%d,%.2f,%.2f\n", buffer, msg.emetteur, Cap_temp[nb]/100.0-40, Cap_hum[nb]/100.0);
-            Serial.printf("   %s,%d,%.2f,%.2f\n", buffer, msg.emetteur, Cap_temp[nb]/100.0-40, Cap_hum[nb]/100.0);
-            // incrémenter le timestamp pour le prochain message
-            if (nb < nb_valeurs - 1) timestamp += Cap_ecart[nb+1] * 600;
+            Serial.printf("   %s,%d,%.2f,%.2f\n\r", buffer, msg.emetteur, Cap_temp[nb]/100.0-40, Cap_hum[nb]/100.0);
           }
           file.close();
         }
@@ -1152,33 +1155,43 @@ void traitement_espnow_recv(EspNowRecvMsg_t &recv) {
         Ctemp = msg.payload[pos++] | (msg.payload[pos++] << 8);
         Chum = msg.payload[pos++] | (msg.payload[pos++] << 8);
         CHA = msg.payload[pos++] | (msg.payload[pos++] << 8);
-        if (log_detail>=2) Serial.printf("   Capteur %d: Temp:%.2f Hum:%.2f HA:%.2f\n", msg.emetteur, Ctemp/100.0-40, Chum/100.0, CHA/100.0);
-        // Enregistrement sur la carte SD, dans le fichier des valeurs journalières
-        time_t timestamp;
-        time(&timestamp);
-
-        String nomFichier = "/capteurs/Capteur24h_" + String((char)msg.emetteur) + ".csv";
-        File file = SD_MMC.open(nomFichier, FILE_APPEND);
-        if (!file)
-        {
-            Serial.println("Erreur ouverture fichier");
-            return;
-        }
-        char buffer[50];
-        struct tm * timeinfo = localtime(&timestamp);
-        strftime(buffer, sizeof(buffer), "%Y-%m-%d %H", timeinfo);
-        file.printf("%s,%d,%.2f,%.2f,%.2f\n", buffer, msg.emetteur, Ctemp/100.0-40, Chum/100.0, CHA/100.0);
-        Serial.printf("   %s,%d,%.2f,%.2f,%.2f\n", buffer, msg.emetteur, Ctemp/100.0-40, Chum/100.0, CHA/100.0  );
-
-        file.close();
+        if (log_detail>=2) Serial.printf("   Capteur %d: Temp:%.2f Hum:%.2f HA:%.2f\n\r", msg.emetteur, Ctemp/100.0-40, Chum/100.0, CHA/100.0);
         renvoi_ack=1;
       }
       if (msg.code2 == 'J')
       {
         if (log_detail>=2) Serial.println("   Sous-type 24h");
-
-        if (!res_node && len==9)
+        // temp24, HR24, HA24, Volt
+        if (!res_node)
         {
+          Serial.printf("longueur payload: %d\n", len);
+          uint16_t Ctemp24;
+          uint16_t Chum24;
+          uint16_t CHA24;
+          uint16_t CVolt24;
+          uint8_t pos24=0;
+          Ctemp24 = msg.payload[pos24++] | (msg.payload[pos24++] << 8);
+          Chum24 = msg.payload[pos24++] | (msg.payload[pos24++] << 8);
+          CHA24 = msg.payload[pos24++] | (msg.payload[pos24++] << 8);
+          CVolt24 = msg.payload[pos24++] | (msg.payload[pos24++] << 8);
+          // Enregistrement sur la carte SD, dans le fichier des valeurs journalières
+          time_t timestamp;
+          time(&timestamp);
+
+          String nomFichier = "/capteurs/Capteur24h_" + String((char)msg.emetteur) + ".csv";
+          File file = SD_MMC.open(nomFichier, FILE_APPEND);
+          if (!file)
+          {
+              Serial.println("Erreur ouverture fichier");
+              return;
+          }
+          char buffer[50];
+          struct tm * timeinfo = localtime(&timestamp);
+          strftime(buffer, sizeof(buffer), "%Y-%m-%d %H", timeinfo);
+          file.printf("%s,%d,%.2f,%.2f,%.2f,%.2f\n", buffer, msg.emetteur, Ctemp24/100.0-40, Chum24/100.0, CHA24/100.0, CVolt24/100.0);
+          if (log_detail>=3) Serial.printf("   %s,%d,%.2f,%.2f,%.2f,%.2f\n\r", buffer, msg.emetteur, Ctemp24/100.0-40, Chum24/100.0, CHA24/100.0, CVolt24/100.0);
+
+          file.close();
           renvoi_ack=1;
         }
       }
@@ -1243,8 +1256,60 @@ void traitement_espnow_recv(EspNowRecvMsg_t &recv) {
 uint8_t envoi_now(uint8_t id_node, uint8_t channel, esp_now_peer_info_t * peerInfo)
 {
   uint8_t result = false;
+  uint8_t actual_channel = 0;
 
-  // Fixer le canal
+  // Une STA connectée est obligatoirement synchronisée sur le canal du point
+  // d'accès => on ne change donc pas de canal
+  if (WiFi.status() != WL_CONNECTED)
+  {
+    esp_err_t err = esp_wifi_set_promiscuous(true);
+    if (err == ESP_OK) {
+      err = esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
+      esp_err_t promiscuous_err = esp_wifi_set_promiscuous(false);
+      if (err == ESP_OK) err = promiscuous_err;
+    }
+     wifi_second_chan_t second;
+    esp_err_t get_channel_err = esp_wifi_get_channel(&actual_channel, &second);
+    if (err != ESP_OK || get_channel_err != ESP_OK || actual_channel != channel)
+    {
+      Serial.printf("⚠️ Échec changement canal (demandé:%d, actuel:%d, erreur:%s)\n\r",
+                    channel, actual_channel,
+                    esp_err_to_name(err != ESP_OK ? err : get_channel_err));
+      return false;
+    }
+    
+    delay(50); // Délai pour stabilisation du canal
+
+    // Ajouter le peer sur ce canal
+    if (esp_now_is_peer_exist(mac_gw)) {
+      esp_now_del_peer(mac_gw);
+    }
+    peerInfo->channel = actual_channel; // Utiliser le canal réel
+    if (esp_now_add_peer(peerInfo) != ESP_OK){
+      Serial.println("❌ Échec ajout peer");
+    }
+    Serial.printf("STA non connecté : channel actuel: %d\n\r", actual_channel);
+  }
+  else {
+    // Une STA connectée reste sur le canal de l'AP
+    actual_channel = WiFi.channel();
+    peerInfo->channel = 0;  // canal Wi-Fi courant
+    Serial.printf("STA connecté : channel actuel: %d\n\r", actual_channel);
+  }
+  
+
+  // Ajouter le peer sur ce canal
+  if (esp_now_is_peer_exist(Node[id_node].mac_node)) {
+    esp_now_del_peer(Node[id_node].mac_node);
+  }
+  peerInfo->channel = 0; // Utiliser le canal réel
+  if (esp_now_add_peer(peerInfo) != ESP_OK){
+    Serial.println("❌ Échec ajout peer");
+  }
+  //Serial.println("✅ Peer ajouté");  
+
+  
+  /* // Fixer le canal
   Serial.printf("\n--- Essai canal %d ---\n", channel);
   esp_wifi_set_promiscuous(true);
   esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
@@ -1267,16 +1332,7 @@ uint8_t envoi_now(uint8_t id_node, uint8_t channel, esp_now_peer_info_t * peerIn
   }
   
   delay(50); // Délai pour stabilisation du canal
-
-  // Ajouter le peer sur ce canal
-  if (esp_now_is_peer_exist(Node[id_node].mac_node)) {
-    esp_now_del_peer(Node[id_node].mac_node);
-  }
-  peerInfo->channel = actual_channel; // Utiliser le canal réel
-  if (esp_now_add_peer(peerInfo) != ESP_OK){
-    Serial.println("❌ Échec ajout peer");
-  }
-  //Serial.println("✅ Peer ajouté");
+  */
 
   // Envoi Température
   Message_EspNow message;

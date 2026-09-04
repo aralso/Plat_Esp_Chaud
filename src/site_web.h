@@ -258,10 +258,6 @@ const char index_html[] PROGMEM = R"rawliteral(
               </div>
             </div>
 
-            <p>Graphique Temperature : </p>
-            <canvas id = "schema" height="195" width="300" style="border:1px solid" class="graph-group">
-              Votre navigateur ne supporte pas la balise canvas
-            </canvas>
 
             <div class="input-group" id="pac-group">
                 <label for="coche_secu">code      </label>
@@ -456,8 +452,7 @@ const char index_html[] PROGMEM = R"rawliteral(
                   34 : latitude<br>
                   35 : longitude<br>
                   40 : esp_now actif<br>
-                  41 : canal wifi <br>
-                  42 : canal wifi prérentiel (sonde)<br>
+                  41 : canal wifi actif<br>
                   <br>
 
               <div class="input-group" id="set-regT-group">
@@ -524,7 +519,7 @@ const char index_html[] PROGMEM = R"rawliteral(
           </section>          
 
           <hr style="width:150px">
-          <label for="nav-toggle-strat" class="toggle-section-label">&#9776;&nbsp;&nbsp;Strat&eacute;gie graphiques</label>
+          <label for="nav-toggle-strat" class="toggle-section-label">&#9776;&nbsp;&nbsp;Graphiques</label>
           <input type="checkbox" id="nav-toggle-strat" class="hidden toggle-section-button" checked="checked">
           <section class="toggle-section">
             <div class="input-group" style="margin-bottom:4px">
@@ -545,6 +540,11 @@ const char index_html[] PROGMEM = R"rawliteral(
               <button id="strat-save-btn" style="display:none">&#128190; Enregistrer</button>
               <span id="strat-status"></span>
             </div>
+            <p>Graphique : </p>
+            <canvas id = "schema" height="195" width="300" style="border:1px solid" class="graph-group">
+              Votre navigateur ne supporte pas la balise canvas
+            </canvas>
+
           </section>
 
         </div>
@@ -917,6 +917,26 @@ const char index_html[] PROGMEM = R"rawliteral(
       }
       window.fetchStatusData = fetchStatusData;
 
+      function refreshGraphData()
+      {
+        for (let j = 0; j < NB_GRAPH; j++) {
+          graphique[j].fill(undefined);
+        }
+        ['schema', 'schema2'].forEach(id => {
+          const canvas = document.getElementById(id);
+          if (canvas) {
+            canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+          }
+        });
+        maj = 0;
+        return fetch(`${baseHost}/status?type=0`)
+          .then(response => {
+            if (!response.ok) throw new Error(`Erreur HTTP ${response.status}`);
+            return response.json();
+          })
+          .then(state => updatePageValues(state));
+      }
+
       setTimeout(() => { fetchStatusData(); } , 1000);
 
       function updatePageValues(state) {
@@ -1056,7 +1076,7 @@ const char index_html[] PROGMEM = R"rawliteral(
 
     // ===== Stratégie d'affichage =====
     (function() {
-      const COL_LABELS = ['T', 'HR', 'HA', 'T24', 'HR24', 'HA24'];
+      const COL_LABELS = ['T', 'HR', 'HA', 'T24', 'HR24', 'HA24', 'V'];
       let stratData = null;
       let statusStrat = null;
       const stratSel     = document.getElementById('strat-sel');
@@ -1088,7 +1108,7 @@ const char index_html[] PROGMEM = R"rawliteral(
         const strat = statusStrat !== null
           ? statusStrat
           : parseInt(stratSel.value) - 1;
-        fetch(`${baseHost}/GetStrat?strat=${strat}`)
+        return fetch(`${baseHost}/GetStrat?strat=${strat}`)
           .then(r => r.json())
           .then(data => {
             stratData = data;
@@ -1136,7 +1156,7 @@ const char index_html[] PROGMEM = R"rawliteral(
           h += `<td>${adr}</td>`;
           h += `<td style="text-align:left;padding:2px 6px">${cap.n}</td>`;
           h += `<td><input type="number" class="s-ord" data-a="${cap.a}" value="${cap.o}" min="0" max="255"></td>`;
-          for (let v = 1; v <= 6; v++) {
+          for (let v = 1; v <= 7; v++) {
             const chk = active.has(cap.a + '_' + v) ? ' checked' : '';
             h += `<td><input type="checkbox" class="s-cb" data-a="${cap.a}" data-v="${v}"${chk}></td>`;
           }
@@ -1167,8 +1187,8 @@ const char index_html[] PROGMEM = R"rawliteral(
         const dureeValue = parseInt(dureeVal.value);
         const dureeSeconds = dureeValue * dureeUnitValue;
         if (isNaN(dureeValue) || dureeValue < 1 ||
-            dureeSeconds < 6 * 3600 || dureeSeconds > 365 * 24 * 3600) {
-          stratStatus.textContent = '⚠️ Durée hors plage (6h–1an)';
+            dureeSeconds < 2 * 3600 || dureeSeconds > 2*365 * 24 * 3600) {
+          stratStatus.textContent = '⚠️ Durée hors plage (2h–2ans)';
           return;
         }
 
@@ -1183,7 +1203,11 @@ const char index_html[] PROGMEM = R"rawliteral(
           })
           .then(r => r.json())
           .then(d => {
-            stratStatus.textContent = (d.res === 0) ? '✅ Enregistré' : '❌ Erreur durée';
+            if (d.res !== 0) throw new Error('Erreur enregistrement durée');
+            return refreshGraphData();
+          })
+          .then(() => {
+            stratStatus.textContent = '✅ Enregistré';
             setTimeout(() => { stratStatus.textContent = ''; }, 3000);
           })
           .catch(() => { stratStatus.textContent = '❌ Erreur réseau'; });
@@ -1198,6 +1222,7 @@ const char index_html[] PROGMEM = R"rawliteral(
             return response.json();
           })
           .then(() => loadStrat())
+          .then(() => refreshGraphData())
           .catch(() => { stratStatus.textContent = '❌ Erreur stratégie active'; });
       });
       stratSaveBtn.addEventListener('click', saveStrat);
