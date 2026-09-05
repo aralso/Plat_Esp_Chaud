@@ -228,7 +228,9 @@ typedef struct {
   uint16_t nb_mess_recu;
   uint8_t actif;
   uint8_t mac_node[6];
-  uint16_t last_update; // derniere reception de message en jours (1er:1/1/2026)
+  uint32_t dernier_timestamp_reçu; // derniere reception de message en 6s
+  uint32_t offset_timestamp; // en 6s
+  bool offset_valide;
 } S_Node;
 
 typedef struct {
@@ -278,7 +280,8 @@ typedef enum {
   EVENT_3min,
   EVENT_CYCLE,
   EVENT_UART1,
-  EVENT_ESP_RECV
+  EVENT_ESP_RECV,
+  EVENT_ESP_RECALAGE
 } systeme_eve_type_t;
 
 // Structure d'un événement tache sequenceur
@@ -375,6 +378,7 @@ uint8_t requete_action_appli(const char* reg, const char* data);
 void appli_event_on(systeme_eve_t evt);
 void appli_event_off(systeme_eve_t evt);
 void traitement_espnow_recv(EspNowRecvMsg_t &recv);
+void traitement_recalage_espnow(uint8_t node);
 uint8_t requete_Get_appli(String var, float* valeur);
 uint8_t requete_Set_appli(String param, int val);
 uint8_t requete_GetReg_appli(int reg, float* valeur);

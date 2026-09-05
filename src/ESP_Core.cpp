@@ -825,6 +825,10 @@ void taskHandler(void *parameter) {
                   break;
                 }
 
+                case EVENT_ESP_RECALAGE:
+                  traitement_recalage_espnow((uint8_t)evt.data);
+                  break;
+
                 case EVENT_GPIO_OFF:  
                     Serial.printf("GPIO:off:%i\n\r", evt.data);
                     appli_event_off(evt);

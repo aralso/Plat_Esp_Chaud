@@ -59,6 +59,7 @@ RTC_NOINIT_ATTR uint8_t compteur_graph;
 RTC_NOINIT_ATTR uint16_t compteur_24h;
 
 S_Node Node[NB_CAPT];
+TimerHandle_t timer_recalage[NB_CAPT] = {};
 RTC_NOINIT_ATTR uint8_t Graph_capt[NB_Graphique][NB_STRAT_CAPT];  // tableau de correspondance entre graphique et capteur
 RTC_NOINIT_ATTR uint8_t Graph_val[NB_Graphique][NB_STRAT_CAPT];  // 0:pas de graphique, 1:temp 2:HR 3:HA 4:temp24 5:HR24 6:HA24 7:voltage
 uint32_t Graph_duree[NB_STRAT_CAPT];  // durée fenêtre graphique en secondes par stratégie
@@ -1013,7 +1014,10 @@ uint8_t conversion_node(uint8_t emetteur, uint8_t *node)
       Node[i].Add_node = emetteur;
       *node = i;
       Node[i].nb_mess_recu = 0; // initialiser l'état du nœud
-      Node[i].actif = 1; 
+      Node[i].actif = 1;
+      Node[i].dernier_timestamp_reçu = 0;
+      Node[i].offset_timestamp = 0;
+      Node[i].offset_valide = false;
       return 2; // Succès
     }
   } 
@@ -1053,6 +1057,79 @@ void OnDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
     Serial.println("⚠️ eventQueue pleine (ESP_RECV)");
   }
 }
+
+static void timer_recalage_callback(TimerHandle_t timer)
+{
+  uint8_t node = (uint8_t)(uintptr_t)pvTimerGetTimerID(timer);
+  systeme_eve_t evt = { EVENT_ESP_RECALAGE, node };
+  if (xQueueSend(eventQueue, &evt, 0) != pdTRUE) {
+    Serial.println("Erreur queue evenement recalage");
+  }
+}
+
+void traitement_recalage_espnow(uint8_t node)
+{
+  if (node >= NB_CAPT || Node[node].Add_node == 0) return;
+
+  String suffix = String((char)Node[node].Add_node);
+  String nomFichier = "/capteurs/Capteur_" + suffix + ".csv";
+  String nomProvisoire = nomFichier + ".tmp";
+  File lecture = SD_MMC.open(nomProvisoire, FILE_READ);
+  if (!lecture) 
+  {
+    Serial.printf("Erreur ouverture fichier provisoire: %s\n\r", nomProvisoire.c_str());
+    return;
+  }
+  uint32_t dernier_tick = 0;
+  bool trouve = false;
+  while (lecture.available()) {
+    String ligne = lecture.readStringUntil('\n');
+    unsigned long tick = 0;
+    uint16_t temperature = 0, humidite = 0;
+    if (sscanf(ligne.c_str(), "%lu,%hu,%hu", &tick, &temperature, &humidite) == 3) {
+      dernier_tick = (uint32_t)tick;
+      trouve = true;
+    }
+  }
+  lecture.close();
+  if (!trouve) {
+    SD_MMC.remove(nomProvisoire);
+    return;
+  }
+
+  time_t maintenant;
+  time(&maintenant);
+  uint32_t now_ticks = (uint32_t)(maintenant / 6);
+  Node[node].offset_timestamp = now_ticks - dernier_tick;
+
+  lecture = SD_MMC.open(nomProvisoire, FILE_READ);
+  File definitif = SD_MMC.open(nomFichier, FILE_APPEND);
+  if (!lecture || !definitif) {
+    if (lecture) lecture.close();
+    if (definitif) definitif.close();
+    Serial.println("Erreur ouverture fichiers de recalage");
+    return;
+  }
+
+  while (lecture.available()) {
+    String ligne = lecture.readStringUntil('\n');
+    unsigned long tick = 0;
+    uint16_t temperature = 0, humidite = 0;
+    if (sscanf(ligne.c_str(), "%lu,%hu,%hu", &tick, &temperature, &humidite) != 3) continue;
+    time_t mesure = (time_t)((uint32_t)tick + Node[node].offset_timestamp) * 6;
+    char buffer[50];
+    struct tm *timeinfo = localtime(&mesure);
+    strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", timeinfo);
+    definitif.printf("%s,%u,%.2f,%.2f\n", buffer, Node[node].Add_node,
+                     temperature / 100.0 - 40, humidite / 100.0);
+  }
+  lecture.close();
+  definitif.close();
+  SD_MMC.remove(nomProvisoire);
+  Node[node].offset_valide = true;
+  if (log_detail >= 3) Serial.println("Donnees tmp recalees");
+}
+
 
 void traitement_espnow_recv(EspNowRecvMsg_t &recv) {
   Message_EspNow &msg = recv.msg;
@@ -1105,44 +1182,75 @@ void traitement_espnow_recv(EspNowRecvMsg_t &recv) {
         if ((res_node!=1) && nb_valeurs && nb_valeurs<NB_VAL_TAB)
         {
           uint16_t Cap_temp[NB_VAL_TAB], Cap_hum[NB_VAL_TAB];
-          uint32_t Cap_ecart[NB_VAL_TAB];
+          uint32_t Cap_tick[NB_VAL_TAB];
 
 
           for (uint8_t nb=0; nb<nb_valeurs; nb++)
           {
             Cap_temp[nb] = msg.payload[pos++] | (msg.payload[pos++] << 8);
             Cap_hum[nb] = msg.payload[pos++] | (msg.payload[pos++] << 8);
-            Cap_ecart[nb] = (msg.payload[pos++] << 16) | (msg.payload[pos++] << 8) | msg.payload[pos++];
+            Cap_tick[nb] = (msg.payload[pos++] << 16) | (msg.payload[pos++] << 8) | msg.payload[pos++];
           }
-          // timestamp actuel
-          time_t timestamp;
-          time(&timestamp);
-          uint32_t timer_actuel = Cap_ecart[nb_valeurs-1];
-          if (log_detail>=3) Serial.printf("   Timer actuel: %lu\n", timer_actuel);
+          // Le timestamp du capteur est exprimé en unités de 6 secondes.
+          const uint32_t max_gap_ticks = (14UL * 24UL * 3600UL) / 6UL;
+          bool coherent = Node[node].offset_valide;
 
-          // on retranche le timer actuel(en 6s) pour retrouver le damarrage initial du capteur
-          timestamp -= timer_actuel * 6;
-          // enregistrement sur la carte SD, dans le fichier du capteur concerné
+          for (uint8_t nb = 1; nb < nb_valeurs && coherent; nb++) {
+            if (Cap_tick[nb] < Cap_tick[nb - 1]) coherent = false;
+          }
+          if (coherent &&
+              (Cap_tick[nb_valeurs - 1] < Node[node].dernier_timestamp_reçu ||
+               Cap_tick[nb_valeurs - 1] - Node[node].dernier_timestamp_reçu > max_gap_ticks)) {
+            coherent = false;
+          }
+
           String nomFichier = "/capteurs/Capteur_" + String((char)msg.emetteur) + ".csv";
-          File file = SD_MMC.open(nomFichier, FILE_APPEND);
-          if (!file)
+          String nomProvisoire = nomFichier + ".tmp";
+
+          if (!coherent) {
+            // Conserver le lot : le recalage sera déclenché après 2 s sans nouveau lot.
+            File provisoire = SD_MMC.open(nomProvisoire, FILE_APPEND);
+            if (!provisoire) {
+              Serial.println("Erreur ouverture fichier provisoire");
+              return;
+            }
+            for (uint8_t nb = 0; nb < nb_valeurs; nb++) {
+              provisoire.printf("%lu,%u,%u\n", (unsigned long)Cap_tick[nb],
+                                Cap_temp[nb], Cap_hum[nb]);
+            }
+            provisoire.close();
+            Node[node].dernier_timestamp_reçu = Cap_tick[nb_valeurs - 1];
+            Node[node].offset_valide = false;
+
+            if (timer_recalage[node] == nullptr) {
+              timer_recalage[node] = xTimerCreate("recalage", pdMS_TO_TICKS(2000),
+                                                   pdFALSE, (void *)(uintptr_t)node,
+                                                   timer_recalage_callback);
+            }
+            if (timer_recalage[node] != nullptr) {
+              xTimerReset(timer_recalage[node], 0);
+            }
+          }
+          else
           {
+            File definitif = SD_MMC.open(nomFichier, FILE_APPEND);
+            if (!definitif) {
               Serial.println("Erreur ouverture fichier");
               return;
+            }
+            for (uint8_t nb = 0; nb < nb_valeurs; nb++) {
+              time_t mesure = (time_t)(Cap_tick[nb] + Node[node].offset_timestamp) * 6;
+              char buffer[50];
+              struct tm *timeinfo = localtime(&mesure);
+              strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", timeinfo);
+              definitif.printf("%s,%d,%.2f,%.2f\n", buffer, msg.emetteur,
+                               Cap_temp[nb] / 100.0 - 40, Cap_hum[nb] / 100.0);
+            }
+            definitif.close();
+            Node[node].dernier_timestamp_reçu = Cap_tick[nb_valeurs - 1];
+            if (log_detail >= 3) Serial.println("Donnees sauvegardees coherentes");
           }
-          // enregistrement du timestamp , de la temp et de l'humidité
-          for (uint8_t nb=0; nb<nb_valeurs; nb++)
-          {
-            char buffer[50];
-            time_t timestampM = timestamp + Cap_ecart[nb] * 6;
-            struct tm * timeinfo = localtime(&timestampM);
-            strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", timeinfo);
-            file.printf("%s,%d,%.2f,%.2f\n", buffer, msg.emetteur, Cap_temp[nb]/100.0-40, Cap_hum[nb]/100.0);
-            Serial.printf("   %s,%d,%.2f,%.2f\n\r", buffer, msg.emetteur, Cap_temp[nb]/100.0-40, Cap_hum[nb]/100.0);
-          }
-          file.close();
         }
-        if (log_detail>=3) Serial.println("Données sauvegardées");
         renvoi_ack=1;  // renvoyer un ACK pour ce type de message 
       }
       else if (msg.code2 == 'I')  // lecture instantanée du capteur
