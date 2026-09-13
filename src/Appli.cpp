@@ -253,7 +253,7 @@ void setup_2()
     uint8_t current_channel;
     wifi_second_chan_t second;
     esp_wifi_get_channel(&current_channel, &second);
-    if (log_detail>=4) Serial.printf("Canal WiFi AVANT config ESP-NOW: %d\n", current_channel);
+    if (log_detail>=4) Serial.printf("Canal WiFi AVANT config ESP-NOW: %d\n\r", current_channel);
     
     // Forcer le canal si nécessaire (doit correspondre au routeur)
     // esp_wifi_set_promiscuous(true);
@@ -273,7 +273,7 @@ void setup_2()
     {
       Serial.println("\n\n======================================");
       Serial.println("🔵 ESP-NOW Initialisé (RÉCEPTEUR)");
-      Serial.printf("   Canal WiFi: %d\n", current_channel);
+      Serial.printf("   Canal WiFi: %d\n\r", current_channel);
       //delay(2000); // 2 secondes de pause pour lire
     }
     //if ((mode_reseau==13) )
@@ -288,8 +288,8 @@ void setup_2()
       Serial.printf("   MAC : %02X:%02X:%02X:%02X:%02X:%02X\n",
             mac_gw[0], mac_gw[1], mac_gw[2],
             mac_gw[3], mac_gw[4], mac_gw[5]);
-
-      Serial.printf("   Canal WiFi: %d\n", current_channel);
+      Serial.println();
+      Serial.printf("   Canal WiFi: %d\n\r", current_channel);
       Serial.println("   En attente de messages...");
       Serial.println("======================================\n\n");
       //delay(2000); // 2 secondes de pause pour lire
@@ -386,10 +386,10 @@ char* requete_status_appli(char *json_response, char *p, uint8_t type)
 
         uint8_t adresse = Graph_capt[j][strat_actif];
         
-        Serial.printf("Adresse graphique: %u\n", adresse);
+        if (log_detail>=3) Serial.printf("Adresse graphique: %u\n\r", adresse);
 
         if (adresse < '0' || adresse > 'z') {
-          Serial.printf("Adresse graphique invalide : %u\n", adresse);
+          Serial.printf("Adresse graphique invalide : %u\n\r", adresse);
           continue;
         }        
         int16_t values[NB_Val_Graph];
@@ -402,10 +402,10 @@ char* requete_status_appli(char *json_response, char *p, uint8_t type)
 
         File file = SD_MMC.open(nomFichier, FILE_READ);
         if (!file) {
-          Serial.printf("Erreur ouverture %s\n", nomFichier.c_str());
+          Serial.printf("Erreur ouverture %s\n\r", nomFichier.c_str());
           continue;
         }
-        Serial.printf("Ouverture du fichier %s\n", nomFichier.c_str());
+        if (log_detail>=3) Serial.printf("Ouverture du fichier %s\n\r", nomFichier.c_str());
 
         // Lecture ligne par ligne et échantillonnage dans NB_Val_Graph slots temporels
         while (file.available())
@@ -418,20 +418,21 @@ char* requete_status_appli(char *json_response, char *p, uint8_t type)
           float ftemp = 0.0f, fhr = 0.0f, fha = 0.0f, fvoltage = 0.0f;
           int emetteur = 0;
           int parsed;
+          int tick=0;
 
           if (is24h) {
             // Format: "YYYY-MM-DD HH,emetteur,temp,hr,ha,voltage"
-            parsed = sscanf(lineStr.c_str(), "%4d-%2d-%2d %2d,%d,%f,%f,%f,%f",
+            parsed = sscanf(lineStr.c_str(), "%4d-%2d-%2d %2d,%d,%i,%f,%f,%f",
               &tm_val.tm_year, &tm_val.tm_mon, &tm_val.tm_mday, &tm_val.tm_hour,
-              &emetteur, &ftemp, &fhr, &fha, &fvoltage);
-            if (parsed < 7) continue;
+              &emetteur, &tick, &ftemp, &fhr, &fvoltage);
+            if (parsed < 9) continue;
           } else {
             // Format: "YYYY-MM-DD HH:MM:SS,emetteur,temp,hr"
             parsed = sscanf(lineStr.c_str(), "%4d-%2d-%2d %2d:%2d:%2d,%d,%f,%f",
               &tm_val.tm_year, &tm_val.tm_mon, &tm_val.tm_mday,
               &tm_val.tm_hour, &tm_val.tm_min, &tm_val.tm_sec,
               &emetteur, &ftemp, &fhr);
-            if (parsed < 8) continue;
+            if (parsed < 9) continue;
           }
 
           tm_val.tm_year -= 1900;
@@ -451,13 +452,12 @@ char* requete_status_appli(char *json_response, char *p, uint8_t type)
           switch (gv) {
             case 1: case 4: fval = ftemp; break;
             case 2: case 5: fval = fhr;   break;
-            case 3:         fval = absoluteHumidity(ftemp, fhr); break;
-            case 6:         fval = (parsed >= 8) ? fha : absoluteHumidity(ftemp, fhr); break;
-            case 7:         if (parsed < 9) continue; fval = fvoltage; break;
+            case 3: case 6: fval = absoluteHumidity(ftemp, fhr); break;
+            case 7:      fval = fvoltage; break;
             default: continue;
           }
           values[slot] = (int16_t)(fval * 10.0f);
-          if (log_detail>=4) Serial.printf("Slot calculé: %d gv: %d valeur: %.2f\n", slot, gv, fval);
+          if (log_detail>=4) Serial.printf("Slot calcule: %d gv: %d valeur: %.2f\n\r", slot, gv, fval);
         }
         file.close();
 
@@ -539,7 +539,7 @@ void init_capt_from_sd()
   }
   dir.close();
   nb_capt_sdcard = count;
-  Serial.printf("init_capt_from_sd: %d capteurs trouvés sur la SD\n", nb_capt_sdcard);
+  Serial.printf("init_capt_from_sd: %d capteurs trouvés sur la SD\n\r", nb_capt_sdcard);
 
   // Tri à bulles décroissant sur last_write (plus récent = ordre le plus bas)
   for (uint8_t i = 0; i < count; i++) {
@@ -572,7 +572,7 @@ void init_capt_from_sd()
     }
   }
 
-  Serial.printf("init_capt_from_sd: %d capteurs chargés\n", count);
+  Serial.printf("init_capt_from_sd: %d capteurs chargés\n\r", count);
 }
 
 // type 1
@@ -1187,9 +1187,9 @@ void traitement_espnow_recv(EspNowRecvMsg_t &recv) {
 
           for (uint8_t nb=0; nb<nb_valeurs; nb++)
           {
+            Cap_tick[nb] = (msg.payload[pos++]) | (msg.payload[pos++] << 8) | (msg.payload[pos++]<<16);
             Cap_temp[nb] = msg.payload[pos++] | (msg.payload[pos++] << 8);
             Cap_hum[nb] = msg.payload[pos++] | (msg.payload[pos++] << 8);
-            Cap_tick[nb] = (msg.payload[pos++] << 16) | (msg.payload[pos++] << 8) | msg.payload[pos++];
           }
           // Le timestamp du capteur est exprimé en unités de 6 secondes.
           const uint32_t max_gap_ticks = (14UL * 24UL * 3600UL) / 6UL;
@@ -1266,21 +1266,23 @@ void traitement_espnow_recv(EspNowRecvMsg_t &recv) {
         if (log_detail>=2) Serial.printf("   Capteur %d: Temp:%.2f Hum:%.2f HA:%.2f\n\r", msg.emetteur, Ctemp/100.0-40, Chum/100.0, CHA/100.0);
         renvoi_ack=1;
       }
-      if (msg.code2 == 'J')
+      if (msg.code2 == 'J')  // 24heures
       {
         if (log_detail>=2) Serial.println("   Sous-type 24h");
         // temp24, HR24, HA24, Volt
         if (!res_node)
         {
           Serial.printf("longueur payload: %d\n", len);
-          uint16_t Ctemp24;
-          uint16_t Chum24;
-          uint16_t CHA24;
-          uint16_t CVolt24;
+          uint32_t Ctick6s;
+          uint16_t Ctemp24;  // Temp en 0,1°C
+          uint16_t Chum24;  // Hum en 0,1%
+          //uint16_t CHA24;
+          uint16_t CVolt24;  // Vbatt en 0,1v
           uint8_t pos24=0;
+          Ctick6s = (msg.payload[pos24++]) | (msg.payload[pos24++] << 8) | (msg.payload[pos24++]<<16) ;
           Ctemp24 = msg.payload[pos24++] | (msg.payload[pos24++] << 8);
           Chum24 = msg.payload[pos24++] | (msg.payload[pos24++] << 8);
-          CHA24 = msg.payload[pos24++] | (msg.payload[pos24++] << 8);
+          //CHA24 = msg.payload[pos24++] | (msg.payload[pos24++] << 8);
           CVolt24 = msg.payload[pos24++] | (msg.payload[pos24++] << 8);
           // Enregistrement sur la carte SD, dans le fichier des valeurs journalières
           time_t timestamp;
@@ -1296,8 +1298,8 @@ void traitement_espnow_recv(EspNowRecvMsg_t &recv) {
           char buffer[50];
           struct tm * timeinfo = localtime(&timestamp);
           strftime(buffer, sizeof(buffer), "%Y-%m-%d %H", timeinfo);
-          file.printf("%s,%d,%.2f,%.2f,%.2f,%.2f\n", buffer, msg.emetteur, Ctemp24/100.0-40, Chum24/100.0, CHA24/100.0, CVolt24/100.0);
-          if (log_detail>=3) Serial.printf("   %s,%d,%.2f,%.2f,%.2f,%.2f\n\r", buffer, msg.emetteur, Ctemp24/100.0-40, Chum24/100.0, CHA24/100.0, CVolt24/100.0);
+          file.printf("%s,%d,%i,%.2f,%.2f,%.2f\n", buffer, msg.emetteur, Ctick6s/10.0, Ctemp24/10.0, Chum24/10.0, CVolt24/10.0);
+          if (log_detail>=3) Serial.printf("   %s,%d,%i,%.2f,%.2f,%.2f\n\r", buffer, msg.emetteur, Ctick6s/10.0, Ctemp24/10.0, Chum24/10.0, CVolt24/10.0);
 
           file.close();
           renvoi_ack=1;
@@ -1339,7 +1341,7 @@ void traitement_espnow_recv(EspNowRecvMsg_t &recv) {
         }
       } 
           
-      Serial.printf("src_addr:%02x:%02x:%02x:%02x:%02x:%02x dest:%02X emetteur:%02X long:%d code:%c code2:%d num_seq:%d\n",
+      if (log_detail>=1) Serial.printf("src_addr:%02x:%02x:%02x:%02x:%02x:%02x dest:%02X emetteur:%02X long:%d code:%c code2:%d num_seq:%d\n",
                     src_addr[0], src_addr[1], src_addr[2], src_addr[3], src_addr[4], src_addr[5],
                     ack_msg.destinataire, ack_msg.emetteur, ack_msg.longueur, ack_msg.code, ack_msg.code2, ack_msg.num_seq);
       esp_err_t result = esp_now_send(src_addr, (uint8_t *)&ack_msg, ack_msg.longueur+3);

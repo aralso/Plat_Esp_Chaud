@@ -346,7 +346,7 @@ String getContentType(const String& filename) {
 }
 
 uint8_t listDir(fs::FS &fs, const char *dirname, uint8_t levels) {
-  Serial.printf("Listing directory: %s\n", dirname);
+  Serial.printf("Listing directory: %s\n\r", dirname);
 
   File root = fs.open(dirname);
   if (!root) {
@@ -961,7 +961,7 @@ uint8_t sd_init()
     }
 
     uint64_t cardSize = SD_MMC.cardSize() / (1024 * 1024);
-    Serial.printf("SD_MMC Card Size: %lluMB\n", cardSize);
+    Serial.printf("SD_MMC Card Size: %lluMB\n\r", cardSize);
 
     const char* mountPoint = "/";
     listDir(SD_MMC, mountPoint, 0);
@@ -977,8 +977,8 @@ uint8_t sd_init()
     //renameFile(SD_MMC, "/hello.txt", "/sdcard/foo.txt");
     //readFile(SD_MMC, "/foo.txt");
     //testFileIO(SD_MMC, "/test.txt");
-    Serial.printf("Total space: %lluMB\n", SD_MMC.totalBytes() / (1024 * 1024));
-    Serial.printf("Used space: %lluMB\n", SD_MMC.usedBytes() / (1024 * 1024));
+    Serial.printf("Total space: %lluMB\n\r", SD_MMC.totalBytes() / (1024 * 1024));
+    Serial.printf("Used space: %lluMB\n\r", SD_MMC.usedBytes() / (1024 * 1024));
  }
   return 0;
 }
