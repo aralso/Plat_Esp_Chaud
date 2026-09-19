@@ -7,6 +7,8 @@
 
 // variables externes
 
+#define Version "v1.1"
+
 #define Graph_Specifique
 
 #define ESP_TJ_ACTIF     // Rôle principal 
@@ -122,6 +124,7 @@ extern uint8_t DelaiWebsocket;
 extern  uint8_t skip_graph;
 extern uint16_t Seuil_batt_sonde;
 extern  uint8_t Nb_jours_Batt_log;
+extern uint8_t vit_cpu;
 extern uint8_t pas_de_veille;
 extern  uint16_t prolong_veille;
 extern  uint8_t action_stockage;
@@ -229,7 +232,7 @@ typedef struct {
   uint8_t actif;
   uint8_t mac_node[6];
   uint32_t dernier_timestamp_reçu; // derniere reception de message en 6s
-  uint32_t offset_timestamp; // en 6s
+  uint32_t dernier_tick6s; // en 6s
   bool offset_valide;
 } S_Node;
 

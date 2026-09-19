@@ -449,6 +449,7 @@ const char index_html[] PROGMEM = R"rawliteral(
                   17 : action stockage<br>
                   18 : action envoi<br>
                   20: boot rapide<br>
+                  21 : vitesse CPU (MHz)<br>
                   34 : latitude<br>
                   35 : longitude<br>
                   40 : esp_now actif<br>

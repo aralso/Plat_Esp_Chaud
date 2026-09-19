@@ -23,6 +23,7 @@ Param PARAMS[] = {
   {"AcSt", 17, U8, 0, 1, 0, 0, nullptr, &action_stockage, 0},        // action stockage
   {"AcEn", 18, U8, 0, 1, 0, 0, nullptr, &action_envoi, 0},           // action envoi
   {"BooRap", 20, U8, 0, 3, 1, 0, nullptr, &boot_rapide, 0},          // registre 11 : boot rapide (0:lent 1:normal 2:rapide 3:très rapide(pas LogG-ota))
+  {"Cpu", 21, U8, 40, 240, 240, 0, nullptr, &vit_cpu, 0},         // registre 11 : vitesse CPU (MHz)
 
 
 

@@ -421,18 +421,18 @@ char* requete_status_appli(char *json_response, char *p, uint8_t type)
           int tick=0;
 
           if (is24h) {
-            // Format: "YYYY-MM-DD HH,emetteur,temp,hr,ha,voltage"
+            // Format: "YYYY-MM-DD HH,emetteur,tick, temp,hr,ha,voltage"
             parsed = sscanf(lineStr.c_str(), "%4d-%2d-%2d %2d,%d,%i,%f,%f,%f",
               &tm_val.tm_year, &tm_val.tm_mon, &tm_val.tm_mday, &tm_val.tm_hour,
               &emetteur, &tick, &ftemp, &fhr, &fvoltage);
             if (parsed < 9) continue;
           } else {
-            // Format: "YYYY-MM-DD HH:MM:SS,emetteur,temp,hr"
-            parsed = sscanf(lineStr.c_str(), "%4d-%2d-%2d %2d:%2d:%2d,%d,%f,%f",
+            // Format: "YYYY-MM-DD HH:MM:SS,emetteur,tick, temp,hr"
+            parsed = sscanf(lineStr.c_str(), "%4d-%2d-%2d %2d:%2d:%2d,%d,%i,%f,%f",
               &tm_val.tm_year, &tm_val.tm_mon, &tm_val.tm_mday,
               &tm_val.tm_hour, &tm_val.tm_min, &tm_val.tm_sec,
-              &emetteur, &ftemp, &fhr);
-            if (parsed < 9) continue;
+              &emetteur, &tick, &ftemp, &fhr);
+            if (parsed < 10) continue;
           }
 
           tm_val.tm_year -= 1900;
@@ -1016,7 +1016,7 @@ uint8_t conversion_node(uint8_t emetteur, uint8_t *node)
       Node[i].nb_mess_recu = 0; // initialiser l'état du nœud
       Node[i].actif = 1;
       Node[i].dernier_timestamp_reçu = 0;
-      Node[i].offset_timestamp = 0;
+      Node[i].dernier_tick6s = 0;
       Node[i].offset_valide = false;
       return 2; // Succès
     }
@@ -1097,10 +1097,11 @@ void traitement_recalage_espnow(uint8_t node)
     return;
   }
 
-  time_t maintenant;
-  time(&maintenant);
-  uint32_t now_ticks = (uint32_t)(maintenant / 6);
-  Node[node].offset_timestamp = now_ticks - dernier_tick;
+  time_t timestamp;
+  time(&timestamp);
+  uint32_t timestamp32 = static_cast<uint32_t>(timestamp);
+  time_t timestamp_origine = timestamp - dernier_tick*6;
+  Serial.printf("Timestamp actuel: %u, Timestamp origine: %u dernier_tick: %u\n\r", timestamp32, (uint32_t)timestamp_origine, dernier_tick);
 
   lecture = SD_MMC.open(nomProvisoire, FILE_READ);
   File definitif = SD_MMC.open(nomFichier, FILE_APPEND);
@@ -1110,24 +1111,26 @@ void traitement_recalage_espnow(uint8_t node)
     Serial.println("Erreur ouverture fichiers de recalage");
     return;
   }
-
+  
   while (lecture.available()) {
     String ligne = lecture.readStringUntil('\n');
-    unsigned long tick = 0;
+    uint32_t tick = 0;
     uint16_t temperature = 0, humidite = 0;
     if (sscanf(ligne.c_str(), "%lu,%hu,%hu", &tick, &temperature, &humidite) != 3) continue;
-    time_t mesure = (time_t)((uint32_t)tick + Node[node].offset_timestamp) * 6;
+    time_t mesure = (time_t)(timestamp_origine + tick * 6);
     char buffer[50];
     struct tm *timeinfo = localtime(&mesure);
     strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", timeinfo);
-    definitif.printf("%s,%u,%.2f,%.2f\n", buffer, Node[node].Add_node,
+    definitif.printf("%s,%u,%i,%.2f,%.2f\n", buffer, Node[node].Add_node, tick,
                      temperature / 100.0 - 40, humidite / 100.0);
   }
   lecture.close();
   definitif.close();
   SD_MMC.remove(nomProvisoire);
+  Node[node].dernier_timestamp_reçu = timestamp32;
+  Node[node].dernier_tick6s = dernier_tick;
   Node[node].offset_valide = true;
-  if (log_detail >= 3) Serial.println("Donnees tmp recalees");
+  if (log_detail >= 1) Serial.println("Donnees tmp recalees");
 }
 
 
@@ -1137,9 +1140,9 @@ void traitement_espnow_recv(EspNowRecvMsg_t &recv) {
   uint8_t *src_addr = recv.src_addr;
 
   // 🔍 DIAGNOSTIC: Afficher infos de réception
+  if (log_detail >=1)  Serial.println("\n📥 ========== RECEPTION ESP-NOW ==========");
   if (log_detail>=2) 
   {
-    Serial.println("\n📥 ========== RECEPTION ESP-NOW ==========");
     for (int i = 0; i < 6; i++) {
       Serial.printf("%02X", src_addr[i]);
       if (i < 5) Serial.print(":");
@@ -1157,11 +1160,11 @@ void traitement_espnow_recv(EspNowRecvMsg_t &recv) {
   num_sequentiel = msg.num_seq;
   uint8_t renvoi_ack=0;
 
-  for (uint8_t i = 0; i < len; i++) {
-    if (log_detail>=2) Serial.printf("%02X ", ((uint8_t*)&msg)[i]);
-  }
+  if (log_detail>=1)
+  {
+    for (uint8_t i = 0; i < len; i++) Serial.printf("%02X ", ((uint8_t*)&msg)[i]);
     Serial.println();
-
+  }
   if ((msg.destinataire & 0x7F) == SERVER_ADD)
   {
     uint8_t node;
@@ -1177,6 +1180,10 @@ void traitement_espnow_recv(EspNowRecvMsg_t &recv) {
       {
         if (log_detail>=3) Serial.println("   Sous-type Température");
         /* Structure payload : nb_val, periode en sec(2Bytes), (temp & hum)* Nb_valeurs(4Bytes)*/
+        time_t timestamp;
+        time(&timestamp);
+        uint32_t timestamp32 = static_cast<uint32_t>(timestamp);
+
         uint16_t pos = 0;
         uint8_t nb_valeurs = msg.payload[pos++];
         if ((res_node!=1) && nb_valeurs && nb_valeurs<NB_VAL_TAB)
@@ -1191,18 +1198,28 @@ void traitement_espnow_recv(EspNowRecvMsg_t &recv) {
             Cap_temp[nb] = msg.payload[pos++] | (msg.payload[pos++] << 8);
             Cap_hum[nb] = msg.payload[pos++] | (msg.payload[pos++] << 8);
           }
-          // Le timestamp du capteur est exprimé en unités de 6 secondes.
-          const uint32_t max_gap_ticks = (14UL * 24UL * 3600UL) / 6UL;
+          // Le tick du capteur est exprimé en unités de 6 secondes.
+          const uint32_t max_gap_ticks = (30UL * 24UL * 3600UL) / 6UL;  // 30 jours
           bool coherent = Node[node].offset_valide;
-
+          if (log_detail>=3) Serial.printf("Coherence initiale: %s\n\r", coherent ? "true" : "false");
           for (uint8_t nb = 1; nb < nb_valeurs && coherent; nb++) {
-            if (Cap_tick[nb] < Cap_tick[nb - 1]) coherent = false;
+            if (Cap_tick[nb] < Cap_tick[nb - 1]) coherent = false;  // verif ticks croissants
           }
+          if (log_detail>=3) Serial.printf("Coherence apres verification des ticks: %s\n\r", coherent ? "true" : "false");
           if (coherent &&
-              (Cap_tick[nb_valeurs - 1] < Node[node].dernier_timestamp_reçu ||
-               Cap_tick[nb_valeurs - 1] - Node[node].dernier_timestamp_reçu > max_gap_ticks)) {
+              (Cap_tick[nb_valeurs - 1] < Node[node].dernier_tick6s ||
+               Cap_tick[nb_valeurs - 1] - Node[node].dernier_tick6s > max_gap_ticks)) {
             coherent = false;
           }
+          if (log_detail>=3) Serial.printf("Coherence inter: %s\n\r", coherent ? "true" : "false");
+          uint32_t ecart_tick = Cap_tick[nb_valeurs - 1] -  Node[node].dernier_tick6s;
+          int32_t ecart_time = timestamp32 - Node[node].dernier_timestamp_reçu;
+          if (log_detail>=3) Serial.printf("ecart_tick %i ecart_time%i \n\r", ecart_tick, ecart_time);
+        
+          int32_t ecart_tick_time = ecart_tick*6 - ecart_time;
+          if ((ecart_time < 0) || (ecart_time > (30UL * 24UL * 3600UL))) coherent = false;
+          if ((ecart_tick_time>56) || (ecart_tick_time<-56)) coherent = false;  // 56 secondes
+          if (log_detail>=3) Serial.printf("Coherence finale: %s\n\r", coherent ? "true" : "false");
 
           String nomFichier = "/capteurs/Capteur_" + String((char)msg.emetteur) + ".csv";
           String nomProvisoire = nomFichier + ".tmp";
@@ -1219,7 +1236,6 @@ void traitement_espnow_recv(EspNowRecvMsg_t &recv) {
                                 Cap_temp[nb], Cap_hum[nb]);
             }
             provisoire.close();
-            Node[node].dernier_timestamp_reçu = Cap_tick[nb_valeurs - 1];
             Node[node].offset_valide = false;
 
             if (timer_recalage[node] == nullptr) {
@@ -1238,16 +1254,20 @@ void traitement_espnow_recv(EspNowRecvMsg_t &recv) {
               Serial.println("Erreur ouverture fichier");
               return;
             }
+            time_t timestamp_origine = timestamp - Cap_tick[nb_valeurs-1]*6;
+            Serial.printf("Timestamp origine: %lu\n", (unsigned long)timestamp_origine);
             for (uint8_t nb = 0; nb < nb_valeurs; nb++) {
-              time_t mesure = (time_t)(Cap_tick[nb] + Node[node].offset_timestamp) * 6;
+              time_t mesure = timestamp_origine + Cap_tick[nb]*6;
               char buffer[50];
               struct tm *timeinfo = localtime(&mesure);
               strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", timeinfo);
-              definitif.printf("%s,%d,%.2f,%.2f\n", buffer, msg.emetteur,
+              definitif.printf("%s,%i, %d,%.2f,%.2f\n", buffer,  msg.emetteur, Cap_tick[nb],
                                Cap_temp[nb] / 100.0 - 40, Cap_hum[nb] / 100.0);
             }
             definitif.close();
-            Node[node].dernier_timestamp_reçu = Cap_tick[nb_valeurs - 1];
+            Node[node].dernier_timestamp_reçu = timestamp32;
+            Node[node].dernier_tick6s = Cap_tick[nb_valeurs - 1];
+            Node[node].offset_valide = true;
             if (log_detail >= 3) Serial.println("Donnees sauvegardees coherentes");
           }
         }
@@ -1341,7 +1361,7 @@ void traitement_espnow_recv(EspNowRecvMsg_t &recv) {
         }
       } 
           
-      if (log_detail>=1) Serial.printf("src_addr:%02x:%02x:%02x:%02x:%02x:%02x dest:%02X emetteur:%02X long:%d code:%c code2:%d num_seq:%d\n",
+      if (log_detail>=3) Serial.printf("src_addr:%02x:%02x:%02x:%02x:%02x:%02x dest:%02X emetteur:%02X long:%d code:%c code2:%d num_seq:%d\n",
                     src_addr[0], src_addr[1], src_addr[2], src_addr[3], src_addr[4], src_addr[5],
                     ack_msg.destinataire, ack_msg.emetteur, ack_msg.longueur, ack_msg.code, ack_msg.code2, ack_msg.num_seq);
       esp_err_t result = esp_now_send(src_addr, (uint8_t *)&ack_msg, ack_msg.longueur+3);
