@@ -140,6 +140,41 @@ const char index_html[] PROGMEM = R"rawliteral(
                 </div>
             </div>
 
+            <div class="input-group">
+                <label for="C_temp">Température capteur :</label>
+                <div class="text">
+                    <span id="C_temp" class="default-action"></span>&deg;C&nbsp&nbsp&nbsp&nbsp
+                </div>
+            </div>
+
+            <div class="input-group">
+                <label for="C_hum">Hum HR capteur :</label>
+                <div class="text">
+                    <span id="C_hum" class="default-action"></span>&nbsp&nbsp&nbsp&nbsp
+                </div>
+            </div>
+
+            <div class="input-group">
+                <label for="C_HA">Hum HA capteur :</label>
+                <div class="text">
+                    <span id="C_HA" class="default-action"></span>&nbsp&nbsp&nbsp&nbsp
+                </div>
+            </div>
+            
+            <div class="input-group">
+                <label for="C_batt">Batterie capteur :</label>
+                <div class="text">
+                    <span id="C_batt" class="default-action"></span>&nbsp&nbsp&nbsp&nbsp
+                </div>
+            </div>
+            
+            <div class="input-group">
+                <label for="last_rssi">RSSI capteur :</label>
+                <div class="text">
+                    <span id="last_rssi" class="default-action"></span>&nbsp&nbsp&nbsp&nbsp
+                </div>
+            </div>
+
             <div class="input-group" id="Tint-mess-group">
               <label for="LRTT"></label>
               <div class="text">

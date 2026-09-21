@@ -75,9 +75,10 @@ typedef struct __attribute__((packed)) {   // packed permet d'éviter les octets
     uint8_t destinataire;
     uint8_t emetteur;
     uint8_t longueur;
+    uint8_t num_seq;  // pour renvoi Ack
+    uint8_t statut;  // bits0-1:00:inactif, 01:mode A(veille), 10:modeB(balise), 11:mode C   bit2:dernier message bit3:pas d'ack
     uint8_t code;
     uint8_t code2;
-    uint8_t num_seq;  // pour renvoi Ack
     uint8_t payload[MAX_PAYLOAD];
 } Message_EspNow;
 
@@ -86,6 +87,7 @@ typedef struct {
   uint8_t src_addr[6];
   Message_EspNow msg;
   int len;
+  int8_t rssi;
 } EspNowRecvMsg_t;
 
 
@@ -226,15 +228,23 @@ typedef struct {
   uint16_t length;
 } UartMessage;
 
+#define NB_CAPT 15
+#define NB_OCTETS_NODE_TX 300
+
 typedef struct {
   uint8_t Add_node;
   uint16_t nb_mess_recu;
-  uint8_t actif;
+  uint8_t statut;  // bits0-1:00:inactif, 01:mode A(veille), 10:modeB(balise), 11:mode C 
   uint8_t mac_node[6];
   uint32_t dernier_timestamp_reçu; // derniere reception de message en 6s
   uint32_t dernier_tick6s; // en 6s
   bool offset_valide;
+  uint16_t head;
+  uint16_t tail;
+  uint8_t queue_tx[NB_OCTETS_NODE_TX];
 } S_Node;
+
+extern S_Node Node[NB_CAPT];
 
 typedef struct {
   uint16_t longueur;  // longueur

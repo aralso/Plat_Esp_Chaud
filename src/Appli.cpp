@@ -32,7 +32,6 @@ TODO :
 extern WiFiClient client;
 extern Preferences preferences_nvs;  // Déclaration externe
 
-#define NB_CAPT 15  // 15 capteurs remote actifs
 #define NB_STRAT_CAPT 3  // Nb de strategie differentes d'affichage de graphiques
 #define NB_CAPT_AFF 30  // nb max de capteurs affichables
 #define NB_VAL_HISTO_BATT 20  // nombre de valeurs historiques de batterie par sonde
@@ -53,12 +52,18 @@ RTC_NOINIT_ATTR uint8_t etat_now;
 RTC_NOINIT_ATTR uint16_t Seuil_batt_sonde;  // millivolt
 RTC_NOINIT_ATTR uint8_t Nb_jours_Batt_log;
 
+// valeurs instantanées du dernier capteur interrogé
+uint16_t C_temp;
+uint16_t C_hum;
+uint16_t C_HA;
+uint16_t C_batt;
+int8_t last_rssi;
+
 int16_t batt_sonde[NB_CAPT_AFF][NB_VAL_HISTO_BATT];  // 20 dernieres valeurs batterie sonde remode
 
 RTC_NOINIT_ATTR uint8_t compteur_graph;
 RTC_NOINIT_ATTR uint16_t compteur_24h;
 
-S_Node Node[NB_CAPT];
 TimerHandle_t timer_recalage[NB_CAPT] = {};
 RTC_NOINIT_ATTR uint8_t Graph_capt[NB_Graphique][NB_STRAT_CAPT];  // tableau de correspondance entre graphique et capteur
 RTC_NOINIT_ATTR uint8_t Graph_val[NB_Graphique][NB_STRAT_CAPT];  // 0:pas de graphique, 1:temp 2:HR 3:HA 4:temp24 5:HR24 6:HA24 7:voltage
@@ -84,7 +89,9 @@ void OnDataSent(const uint8_t* mac_addr, esp_now_send_status_t status);
 
 uint8_t parseMacString(const char* str, uint8_t mac[6]);
 float absoluteHumidity(float temperature, float relativeHumidity);
-
+size_t node_buffer_used(uint8_t node);
+uint8_t traitement_queue_data_gateway(uint8_t mise_veille, uint8_t node);
+void liste_des_nodes(void);
 
 
 #ifdef Temp_int_DS18B20
@@ -239,6 +246,8 @@ void setup_1()
 // apres demarrage reseau
 void setup_2()
 {
+
+  
   #ifdef ESP_TJ_ACTIF
 
 
@@ -344,10 +353,19 @@ void setupRoutes_appli()
   });
 }
 
+// initialisation des variables en RAM , lors d'un cold reset
 void init_rtc_variables_appli()
 {
+    for (uint8_t i = 0; i < NB_CAPT; i++)
+    {
+        // initialisation des variables pour chaque Node
+        Node[i].Add_node = 0;
+        Node[i].statut =0;
+    }
+
 }
 
+// a chaque demarrage
 void init_ram_variables_appli()
 {
   for (uint8_t s = 0; s < NB_STRAT_CAPT; s++)
@@ -367,6 +385,12 @@ char* requete_status_appli(char *json_response, char *p, uint8_t type)
 
   p += sprintf(p, "\"strat_actif\":%u,", strat_actif);
   p += sprintf(p, "\"strat_duree\":%lu,", (unsigned long)Graph_duree[strat_actif]);
+  p += sprintf(p, "\"C_temp\":%.2f,", C_temp/100.0-40);
+  p += sprintf(p, "\"C_hum\":%.2f,", C_hum/100.0);
+  p += sprintf(p, "\"C_HA\":%.2f,", C_HA/100.0);
+  p += sprintf(p, "\"C_batt\":%.2f,", C_batt/100.0);
+  p += sprintf(p, "\"C_batt\":%.2f,", C_batt/100.0);
+  p += sprintf(p, "\"last_rssi\":%d,", last_rssi);
 
   if (!type)  // pas d'envoi des graphiques si type=1(maj)
   {
@@ -498,7 +522,7 @@ void init_capt_from_sd()
 {
   // init tableau
    for (uint8_t i = 0; i < NB_CAPT_AFF; i++) {
-    Capt[i].actif     = 1;  // inactif
+    Capt[i].actif  = 1;  // inactif
    }
   // Structures temporaires pour trier par date (date desc = plus récent d'abord)
   struct CaptEntry {
@@ -745,6 +769,11 @@ void event_cycle()
 uint8_t requete_action_appli(const char *reg, const char *data)
 {
   uint8_t res=1;
+
+  if (strcmp(reg, "Nodes") == 0) {
+    res = 0;
+    liste_des_nodes();
+  }
 
   if (strcmp(reg, "Test1") == 0) 
     { 
@@ -997,24 +1026,35 @@ uint8_t suppression_node(uint8_t node)
   return 0;
 }
 
+void liste_des_nodes()
+{
+  Serial.println("Liste des nodes :");
+  for (uint8_t i = 0; i < NB_CAPT; i++)
+  {
+      Serial.printf("Index %d : Node %02X statut: %02X nbmess_rx: %i head:%i tail:%i\n\r", i, Node[i].Add_node, Node[i].statut, Node[i].nb_mess_recu, Node[i].head, Node[i].tail);
+  }
+}
+// 0:node trouvé
+// 1:échec
+// 2:nouveau node ajouté
 uint8_t conversion_node(uint8_t emetteur, uint8_t *node)
 {
   // Implémentation de la conversion du nœud
   for (uint8_t i = 0; i < NB_CAPT; i++) {
     if (Node[i].Add_node == emetteur) {
       *node = i;
-      if (log_detail>=3) Serial.printf("Node %c trouvé à l'index %d\n\r", emetteur, i);
+      if (log_detail>=3) Serial.printf("Node %c trouve a l'index %d\n\r", emetteur, i);
       return 0; // Succès
     }
   }
   // verif s'il reste des places vides pour de nouveaux nodes
   for (uint8_t i = 0; i < NB_CAPT; i++) {
-    if (log_detail>=2) Serial.printf("add_node[%d] = %c\n\r", i, Node[i].Add_node);
+    if (log_detail>=2) Serial.printf("Node[%d] = %02X\n\r", i, Node[i].Add_node);
     if (Node[i].Add_node == 0) { // place vide
       Node[i].Add_node = emetteur;
       *node = i;
       Node[i].nb_mess_recu = 0; // initialiser l'état du nœud
-      Node[i].actif = 1;
+      Node[i].statut = 0b01; // mode A (veille)
       Node[i].dernier_timestamp_reçu = 0;
       Node[i].dernier_tick6s = 0;
       Node[i].offset_valide = false;
@@ -1042,7 +1082,14 @@ void OnDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
     Serial.println("⚠️ message trop long");
     return;
   }
+
   EspNowRecvMsg_t espRecv;
+
+  // niveau de réception RSSI
+  if (info != nullptr && info->rx_ctrl != nullptr)  last_rssi = info->rx_ctrl->rssi;
+  else last_rssi=0;
+  espRecv.rssi = last_rssi;
+
   memcpy(espRecv.src_addr, info->src_addr, 6);
   memcpy(&espRecv.msg, data, len);
   espRecv.len = len;
@@ -1169,210 +1216,226 @@ void traitement_espnow_recv(EspNowRecvMsg_t &recv) {
   {
     uint8_t node;
     uint8_t res_node = conversion_node(msg.emetteur, &node);
-    if (res_node==2)    memcpy(Node[node].mac_node, src_addr, 6);
-
-    if (log_detail>=3) Serial.printf("Message destiné au serveur de %c node:%i\n\r", msg.emetteur, res_node);
-
-    if (msg.code == 'C')
+    if (res_node!=1)   // sinon plus de place node, message ignoré
     {
-      if (log_detail>=3) Serial.println("Message de type Capteur");
-      if (msg.code2 == 'T')
-      {
-        if (log_detail>=3) Serial.println("   Sous-type Température");
-        /* Structure payload : nb_val, periode en sec(2Bytes), (temp & hum)* Nb_valeurs(4Bytes)*/
-        time_t timestamp;
-        time(&timestamp);
-        uint32_t timestamp32 = static_cast<uint32_t>(timestamp);
+      Node[node].statut = msg.statut & 0x03;  // bits0-1:00:inactif, 01:mode A(veille), 10:modeB(balise), 11:mode C 
+      memcpy(Node[node].mac_node, src_addr, 6);
 
-        uint16_t pos = 0;
-        uint8_t nb_valeurs = msg.payload[pos++];
-        if ((res_node!=1) && nb_valeurs && nb_valeurs<NB_VAL_TAB)
+      if (log_detail>=3) Serial.printf("Message destine au serveur de %c node:%i\n\r", msg.emetteur, res_node);
+
+      if (msg.code == 'C')
+      {
+        if (log_detail>=3) Serial.println("Message de type Capteur");
+        if (msg.code2 == 'T')
         {
-          uint16_t Cap_temp[NB_VAL_TAB], Cap_hum[NB_VAL_TAB];
-          uint32_t Cap_tick[NB_VAL_TAB];
-
-
-          for (uint8_t nb=0; nb<nb_valeurs; nb++)
-          {
-            Cap_tick[nb] = (msg.payload[pos++]) | (msg.payload[pos++] << 8) | (msg.payload[pos++]<<16);
-            Cap_temp[nb] = msg.payload[pos++] | (msg.payload[pos++] << 8);
-            Cap_hum[nb] = msg.payload[pos++] | (msg.payload[pos++] << 8);
-          }
-          // Le tick du capteur est exprimé en unités de 6 secondes.
-          const uint32_t max_gap_ticks = (30UL * 24UL * 3600UL) / 6UL;  // 30 jours
-          bool coherent = Node[node].offset_valide;
-          if (log_detail>=3) Serial.printf("Coherence initiale: %s\n\r", coherent ? "true" : "false");
-          for (uint8_t nb = 1; nb < nb_valeurs && coherent; nb++) {
-            if (Cap_tick[nb] < Cap_tick[nb - 1]) coherent = false;  // verif ticks croissants
-          }
-          if (log_detail>=3) Serial.printf("Coherence apres verification des ticks: %s\n\r", coherent ? "true" : "false");
-          if (coherent &&
-              (Cap_tick[nb_valeurs - 1] < Node[node].dernier_tick6s ||
-               Cap_tick[nb_valeurs - 1] - Node[node].dernier_tick6s > max_gap_ticks)) {
-            coherent = false;
-          }
-          if (log_detail>=3) Serial.printf("Coherence inter: %s\n\r", coherent ? "true" : "false");
-          uint32_t ecart_tick = Cap_tick[nb_valeurs - 1] -  Node[node].dernier_tick6s;
-          int32_t ecart_time = timestamp32 - Node[node].dernier_timestamp_reçu;
-          if (log_detail>=3) Serial.printf("ecart_tick %i ecart_time%i \n\r", ecart_tick, ecart_time);
-        
-          int32_t ecart_tick_time = ecart_tick*6 - ecart_time;
-          if ((ecart_time < 0) || (ecart_time > (30UL * 24UL * 3600UL))) coherent = false;
-          if ((ecart_tick_time>56) || (ecart_tick_time<-56)) coherent = false;  // 56 secondes
-          if (log_detail>=3) Serial.printf("Coherence finale: %s\n\r", coherent ? "true" : "false");
-
-          String nomFichier = "/capteurs/Capteur_" + String((char)msg.emetteur) + ".csv";
-          String nomProvisoire = nomFichier + ".tmp";
-
-          if (!coherent) {
-            // Conserver le lot : le recalage sera déclenché après 2 s sans nouveau lot.
-            File provisoire = SD_MMC.open(nomProvisoire, FILE_APPEND);
-            if (!provisoire) {
-              Serial.println("Erreur ouverture fichier provisoire");
-              return;
-            }
-            for (uint8_t nb = 0; nb < nb_valeurs; nb++) {
-              provisoire.printf("%lu,%u,%u\n", (unsigned long)Cap_tick[nb],
-                                Cap_temp[nb], Cap_hum[nb]);
-            }
-            provisoire.close();
-            Node[node].offset_valide = false;
-
-            if (timer_recalage[node] == nullptr) {
-              timer_recalage[node] = xTimerCreate("recalage", pdMS_TO_TICKS(2000),
-                                                   pdFALSE, (void *)(uintptr_t)node,
-                                                   timer_recalage_callback);
-            }
-            if (timer_recalage[node] != nullptr) {
-              xTimerReset(timer_recalage[node], 0);
-            }
-          }
-          else
-          {
-            File definitif = SD_MMC.open(nomFichier, FILE_APPEND);
-            if (!definitif) {
-              Serial.println("Erreur ouverture fichier");
-              return;
-            }
-            time_t timestamp_origine = timestamp - Cap_tick[nb_valeurs-1]*6;
-            Serial.printf("Timestamp origine: %lu\n", (unsigned long)timestamp_origine);
-            for (uint8_t nb = 0; nb < nb_valeurs; nb++) {
-              time_t mesure = timestamp_origine + Cap_tick[nb]*6;
-              char buffer[50];
-              struct tm *timeinfo = localtime(&mesure);
-              strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", timeinfo);
-              definitif.printf("%s,%i, %d,%.2f,%.2f\n", buffer,  msg.emetteur, Cap_tick[nb],
-                               Cap_temp[nb] / 100.0 - 40, Cap_hum[nb] / 100.0);
-            }
-            definitif.close();
-            Node[node].dernier_timestamp_reçu = timestamp32;
-            Node[node].dernier_tick6s = Cap_tick[nb_valeurs - 1];
-            Node[node].offset_valide = true;
-            if (log_detail >= 3) Serial.println("Donnees sauvegardees coherentes");
-          }
-        }
-        renvoi_ack=1;  // renvoyer un ACK pour ce type de message 
-      }
-      else if (msg.code2 == 'I')  // lecture instantanée du capteur
-      {
-        if (log_detail>=2) Serial.println("   Temperature instantanee");
-        uint16_t Ctemp;
-        uint16_t Chum;
-        uint16_t CHA;
-        uint8_t pos=0;
-        Ctemp = msg.payload[pos++] | (msg.payload[pos++] << 8);
-        Chum = msg.payload[pos++] | (msg.payload[pos++] << 8);
-        CHA = msg.payload[pos++] | (msg.payload[pos++] << 8);
-        if (log_detail>=2) Serial.printf("   Capteur %d: Temp:%.2f Hum:%.2f HA:%.2f\n\r", msg.emetteur, Ctemp/100.0-40, Chum/100.0, CHA/100.0);
-        renvoi_ack=1;
-      }
-      if (msg.code2 == 'J')  // 24heures
-      {
-        if (log_detail>=2) Serial.println("   Sous-type 24h");
-        // temp24, HR24, HA24, Volt
-        if (!res_node)
-        {
-          Serial.printf("longueur payload: %d\n", len);
-          uint32_t Ctick6s;
-          uint16_t Ctemp24;  // Temp en 0,1°C
-          uint16_t Chum24;  // Hum en 0,1%
-          //uint16_t CHA24;
-          uint16_t CVolt24;  // Vbatt en 0,1v
-          uint8_t pos24=0;
-          Ctick6s = (msg.payload[pos24++]) | (msg.payload[pos24++] << 8) | (msg.payload[pos24++]<<16) ;
-          Ctemp24 = msg.payload[pos24++] | (msg.payload[pos24++] << 8);
-          Chum24 = msg.payload[pos24++] | (msg.payload[pos24++] << 8);
-          //CHA24 = msg.payload[pos24++] | (msg.payload[pos24++] << 8);
-          CVolt24 = msg.payload[pos24++] | (msg.payload[pos24++] << 8);
-          // Enregistrement sur la carte SD, dans le fichier des valeurs journalières
+          if (log_detail>=3) Serial.println("   Sous-type Temperature");
+          /* Structure payload : nb_val, periode en sec(2Bytes), (temp & hum)* Nb_valeurs(4Bytes)*/
           time_t timestamp;
           time(&timestamp);
+          uint32_t timestamp32 = static_cast<uint32_t>(timestamp);
 
-          String nomFichier = "/capteurs/Capteur24h_" + String((char)msg.emetteur) + ".csv";
-          File file = SD_MMC.open(nomFichier, FILE_APPEND);
-          if (!file)
+          uint16_t pos = 0;
+          uint8_t nb_valeurs = msg.payload[pos++];
+          if ((res_node!=1) && nb_valeurs && nb_valeurs<NB_VAL_TAB)
           {
-              Serial.println("Erreur ouverture fichier");
-              return;
-          }
-          char buffer[50];
-          struct tm * timeinfo = localtime(&timestamp);
-          strftime(buffer, sizeof(buffer), "%Y-%m-%d %H", timeinfo);
-          file.printf("%s,%d,%i,%.2f,%.2f,%.2f\n", buffer, msg.emetteur, Ctick6s/10.0, Ctemp24/10.0, Chum24/10.0, CVolt24/10.0);
-          if (log_detail>=3) Serial.printf("   %s,%d,%i,%.2f,%.2f,%.2f\n\r", buffer, msg.emetteur, Ctick6s/10.0, Ctemp24/10.0, Chum24/10.0, CVolt24/10.0);
+            uint16_t Cap_temp[NB_VAL_TAB], Cap_hum[NB_VAL_TAB];
+            uint32_t Cap_tick[NB_VAL_TAB];
 
-          file.close();
+
+            for (uint8_t nb=0; nb<nb_valeurs; nb++)
+            {
+              Cap_tick[nb] = (msg.payload[pos++]) | (msg.payload[pos++] << 8) | (msg.payload[pos++]<<16);
+              Cap_temp[nb] = msg.payload[pos++] | (msg.payload[pos++] << 8);
+              Cap_hum[nb] = msg.payload[pos++] | (msg.payload[pos++] << 8);
+            }
+            // Le tick du capteur est exprimé en unités de 6 secondes.
+            const uint32_t max_gap_ticks = (30UL * 24UL * 3600UL) / 6UL;  // 30 jours
+            bool coherent = Node[node].offset_valide;
+            if (log_detail>=3) Serial.printf("Coherence initiale: %s\n\r", coherent ? "true" : "false");
+            for (uint8_t nb = 1; nb < nb_valeurs && coherent; nb++) {
+              if (Cap_tick[nb] < Cap_tick[nb - 1]) coherent = false;  // verif ticks croissants
+            }
+            if (log_detail>=3) Serial.printf("Coherence apres verification des ticks: %s\n\r", coherent ? "true" : "false");
+            if (coherent &&
+                (Cap_tick[nb_valeurs - 1] < Node[node].dernier_tick6s ||
+                Cap_tick[nb_valeurs - 1] - Node[node].dernier_tick6s > max_gap_ticks)) {
+              coherent = false;
+            }
+            if (log_detail>=3) Serial.printf("Coherence inter: %s\n\r", coherent ? "true" : "false");
+            uint32_t ecart_tick = Cap_tick[nb_valeurs - 1] -  Node[node].dernier_tick6s;
+            int32_t ecart_time = timestamp32 - Node[node].dernier_timestamp_reçu;
+            if (log_detail>=3) Serial.printf("ecart_tick %i ecart_time%i \n\r", ecart_tick, ecart_time);
+          
+            int32_t ecart_tick_time = ecart_tick*6 - ecart_time;
+            if ((ecart_time < 0) || (ecart_time > (30UL * 24UL * 3600UL))) coherent = false;
+            if ((ecart_tick_time>56) || (ecart_tick_time<-56)) coherent = false;  // 56 secondes
+            if (log_detail>=3) Serial.printf("Coherence finale: %s\n\r", coherent ? "true" : "false");
+
+            String nomFichier = "/capteurs/Capteur_" + String((char)msg.emetteur) + ".csv";
+            String nomProvisoire = nomFichier + ".tmp";
+
+            if (!coherent) {
+              // Conserver le lot : le recalage sera déclenché après 2 s sans nouveau lot.
+              File provisoire = SD_MMC.open(nomProvisoire, FILE_APPEND);
+              if (!provisoire) {
+                Serial.println("Erreur ouverture fichier provisoire");
+                return;
+              }
+              for (uint8_t nb = 0; nb < nb_valeurs; nb++) {
+                provisoire.printf("%lu,%u,%u\n", (unsigned long)Cap_tick[nb],
+                                  Cap_temp[nb], Cap_hum[nb]);
+              }
+              provisoire.close();
+              Node[node].offset_valide = false;
+
+              if (timer_recalage[node] == nullptr) {
+                timer_recalage[node] = xTimerCreate("recalage", pdMS_TO_TICKS(2000),
+                                                    pdFALSE, (void *)(uintptr_t)node,
+                                                    timer_recalage_callback);
+              }
+              if (timer_recalage[node] != nullptr) {
+                xTimerReset(timer_recalage[node], 0);
+              }
+            }
+            else
+            {
+              File definitif = SD_MMC.open(nomFichier, FILE_APPEND);
+              if (!definitif) {
+                Serial.println("Erreur ouverture fichier");
+                return;
+              }
+              time_t timestamp_origine = timestamp - Cap_tick[nb_valeurs-1]*6;
+              Serial.printf("Timestamp origine: %lu\n", (unsigned long)timestamp_origine);
+              for (uint8_t nb = 0; nb < nb_valeurs; nb++) {
+                time_t mesure = timestamp_origine + Cap_tick[nb]*6;
+                char buffer[50];
+                struct tm *timeinfo = localtime(&mesure);
+                strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", timeinfo);
+                definitif.printf("%s,%i, %d,%.2f,%.2f\n", buffer,  msg.emetteur, Cap_tick[nb],
+                                Cap_temp[nb] / 100.0 - 40, Cap_hum[nb] / 100.0);
+              }
+              definitif.close();
+              Node[node].dernier_timestamp_reçu = timestamp32;
+              Node[node].dernier_tick6s = Cap_tick[nb_valeurs - 1];
+              Node[node].offset_valide = true;
+              if (log_detail >= 3) Serial.println("Donnees sauvegardees coherentes");
+            }
+          }
+          renvoi_ack=1;  // renvoyer un ACK pour ce type de message 
+        }
+        else if (msg.code2 == 'I')  // lecture instantanée du capteur
+        {
+          if (log_detail>=2) Serial.println("   Temperature instantanee");
+          uint8_t pos=0;
+          C_temp = msg.payload[pos++] | (msg.payload[pos++] << 8);
+          C_hum = msg.payload[pos++] | (msg.payload[pos++] << 8);
+          C_HA = msg.payload[pos++] | (msg.payload[pos++] << 8);
+          C_batt = msg.payload[pos++] | (msg.payload[pos++] << 8);
+          if (log_detail>=2) Serial.printf("   Capteur %d: Temp:%.2f Hum:%.2f HA:%.2f Batt:%.2f\n\r", msg.emetteur, C_temp/100.0-40, C_hum/100.0, C_HA/100.0, C_batt/100.0);
           renvoi_ack=1;
         }
-      }
-    }
-    else if (msg.code == 'B') { // Batterie
-        if (log_detail>=2) Serial.printf(" Type de message batterie: code:%d\n", msg.code);
-      
-      renvoi_ack=1;
-    }
-    else 
-        Serial.printf("⚠️ Type de message inconnu: code:%d\n", msg.code);
+        if (msg.code2 == 'J')  // 24heures
+        {
+          if (log_detail>=2) Serial.println("   Sous-type 24h");
+          // temp24, HR24, HA24, Volt
+          if (!res_node)
+          {
+            Serial.printf("longueur payload: %d\n", len);
+            uint32_t Ctick6s;
+            uint16_t Ctemp24;  // Temp en 0,1°C
+            uint16_t Chum24;  // Hum en 0,1%
+            //uint16_t CHA24;
+            uint16_t CVolt24;  // Vbatt en 0,1v
+            uint8_t pos24=0;
+            Ctick6s = (msg.payload[pos24++]) | (msg.payload[pos24++] << 8) | (msg.payload[pos24++]<<16) ;
+            Ctemp24 = msg.payload[pos24++] | (msg.payload[pos24++] << 8);
+            Chum24 = msg.payload[pos24++] | (msg.payload[pos24++] << 8);
+            //CHA24 = msg.payload[pos24++] | (msg.payload[pos24++] << 8);
+            CVolt24 = msg.payload[pos24++] | (msg.payload[pos24++] << 8);
+            // Enregistrement sur la carte SD, dans le fichier des valeurs journalières
+            time_t timestamp;
+            time(&timestamp);
 
-    // renvoie un Accusé reception
-    if ((res_node!=1) && (renvoi_ack==1))
-    {
-      Message_EspNow ack_msg;
-      ack_msg.destinataire = msg.emetteur | 0x80;
-      ack_msg.emetteur = SERVER_ADD ;  // bit fort à 1 pour indiquer que c'est un message hexadécimal  
-      ack_msg.longueur = 3+0;  // longueur du payload
-      ack_msg.code = 'A';    // code pour ACK
-      ack_msg.code2 = 0;     // pas de sous-code
-      ack_msg.num_seq = num_sequentiel;  // renvoyer le numéro séquentiel reçu
+            String nomFichier = "/capteurs/Capteur24h_" + String((char)msg.emetteur) + ".csv";
+            File file = SD_MMC.open(nomFichier, FILE_APPEND);
+            if (!file)
+            {
+                Serial.println("Erreur ouverture fichier");
+                return;
+            }
+            char buffer[50];
+            struct tm * timeinfo = localtime(&timestamp);
+            strftime(buffer, sizeof(buffer), "%Y-%m-%d %H", timeinfo);
+            file.printf("%s,%d,%i,%.2f,%.2f,%.2f\n", buffer, msg.emetteur, Ctick6s/10.0, Ctemp24/10.0, Chum24/10.0, CVolt24/10.0);
+            if (log_detail>=3) Serial.printf("   %s,%d,%i,%.2f,%.2f,%.2f\n\r", buffer, msg.emetteur, Ctick6s/10.0, Ctemp24/10.0, Chum24/10.0, CVolt24/10.0);
 
-      esp_now_peer_info_t peer = {};
-      memcpy(peer.peer_addr, src_addr, ESP_NOW_ETH_ALEN);
-
-      peer.channel = 0;          // canal WiFi courant
-      peer.ifidx = WIFI_IF_STA;  // interface utilisée
-      peer.encrypt = false;
-
-      if (!esp_now_is_peer_exist(peer.peer_addr)) {
-        esp_err_t err = esp_now_add_peer(&peer);
-        if (err != ESP_OK && err != ESP_ERR_ESPNOW_EXIST) {
-          Serial.printf("Erreur ajout peer: %d (%s)\n",
-                        err, esp_err_to_name(err));
-          return;
+            file.close();
+            renvoi_ack=1;
+          }
         }
-      } 
-          
-      if (log_detail>=3) Serial.printf("src_addr:%02x:%02x:%02x:%02x:%02x:%02x dest:%02X emetteur:%02X long:%d code:%c code2:%d num_seq:%d\n",
-                    src_addr[0], src_addr[1], src_addr[2], src_addr[3], src_addr[4], src_addr[5],
-                    ack_msg.destinataire, ack_msg.emetteur, ack_msg.longueur, ack_msg.code, ack_msg.code2, ack_msg.num_seq);
-      esp_err_t result = esp_now_send(src_addr, (uint8_t *)&ack_msg, ack_msg.longueur+3);
-      if (result == ESP_OK) {
-        if (log_detail>=3) Serial.println("✅ Accusé de réception envoyé");
-      } else {
-        Serial.printf("❌ Erreur envoi ACK: %i\n", result);
+      }
+      else if (msg.code == 'B') { // Batterie
+          if (log_detail>=2) Serial.printf(" Type de message batterie: code:%d\n", msg.code);
+        
+        renvoi_ack=1;
+      }
+      else 
+          Serial.printf("⚠️ Type de message inconnu: code:%d\n", msg.code);
+
+      // renvoie un Accusé reception
+      if (renvoi_ack==1)
+      {
+        Message_EspNow ack_msg;
+        ack_msg.destinataire = msg.emetteur | 0x80;
+        ack_msg.emetteur = SERVER_ADD ;  // bit fort à 1 pour indiquer que c'est un message hexadécimal  
+        ack_msg.longueur = 3+0;  // longueur du payload
+        ack_msg.code = 'A';    // code pour ACK
+        ack_msg.code2 = 0;     // pas de sous-code
+        ack_msg.num_seq = num_sequentiel;  // renvoyer le numéro séquentiel reçu
+
+        esp_now_peer_info_t peer = {};
+        memcpy(peer.peer_addr, src_addr, ESP_NOW_ETH_ALEN);
+
+        peer.channel = 0;          // canal WiFi courant
+        peer.ifidx = WIFI_IF_STA;  // interface utilisée
+        peer.encrypt = false;
+
+        if (!esp_now_is_peer_exist(peer.peer_addr)) {
+          esp_err_t err = esp_now_add_peer(&peer);
+          if (err != ESP_OK && err != ESP_ERR_ESPNOW_EXIST) {
+            Serial.printf("Erreur ajout peer: %d (%s)\n",
+                          err, esp_err_to_name(err));
+            return;
+          }
+        } 
+            
+        if (log_detail>=3) Serial.printf("src_addr:%02x:%02x:%02x:%02x:%02x:%02x dest:%02X emetteur:%02X long:%d code:%c code2:%d num_seq:%d\n",
+                      src_addr[0], src_addr[1], src_addr[2], src_addr[3], src_addr[4], src_addr[5],
+                      ack_msg.destinataire, ack_msg.emetteur, ack_msg.longueur, ack_msg.code, ack_msg.code2, ack_msg.num_seq);
+        esp_err_t result = esp_now_send(src_addr, (uint8_t *)&ack_msg, ack_msg.longueur+3);
+        if (result == ESP_OK) {
+          if (log_detail>=3) Serial.println(" Accuse de reception envoye");
+        } else {
+          Serial.printf("❌ Erreur envoi ACK: %i\n", result);
+        }
+      }
+      Serial.printf("Statut du message: %02X, Statut du node: %02X\n\r", msg.statut&0x3F, Node[node].statut);
+      if ((msg.statut & 4) && ((Node[node].statut & 3) == 0b01)) // c'est le dernier message de ce node, et il est en mode A
+      {
+        // y at-il des messages a envoyer vers ce node, dans la queue
+        if (node_buffer_used(node))
+        {
+          if (log_detail >= 1)  Serial.printf("Octets restants dans le buffer a envoyer : %u\n\r", node_buffer_used(node));
+          traitement_queue_data_gateway(0,node);
+        }
+        else
+        {
+          if (log_detail >= 1)  Serial.println("Pas de message a envoyer dans le buffer");
+        }
+
       }
     }
-
-
+    else Serial.printf("plus de place pour node:%d\n", msg.emetteur);
   }
   else
   {
