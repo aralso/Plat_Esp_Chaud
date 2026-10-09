@@ -80,15 +80,17 @@ typedef struct __attribute__((packed)) {   // packed permet d'éviter les octets
     uint8_t code;
     uint8_t code2;
     uint8_t payload[MAX_PAYLOAD];
-} Message_EspNow;
+} Message_Struct;
 
 // Structure pour la queue de réception ESP-NOW (message + adresse source)
 typedef struct {
   uint8_t src_addr[6];
-  Message_EspNow msg;
+  Message_Struct msg;
   int len;
   int8_t rssi;
 } EspNowRecvMsg_t;
+
+uint8_t envoi_data(Message_Struct mess_esp, uint8_t node);
 
 
 
@@ -155,6 +157,9 @@ extern uint8_t current_sensor_quality;
 extern const size_t PARAMS_COUNT;
 extern Param PARAMS[];
 
+extern uint8_t My_Address;
+extern int8_t last_rssi;
+extern uint8_t num_sequentiel;  // pour Ack
 
 //  -------  CONFIGURATION DES PINS
 //  -----------------------------------------------
@@ -234,11 +239,12 @@ typedef struct {
 typedef struct {
   uint8_t Add_node;
   uint16_t nb_mess_recu;
-  uint8_t statut;  // bits0-1:00:inactif, 01:mode A(veille), 10:modeB(balise), 11:mode C 
+  uint8_t Nstatut;  // bits0-1:00:inactif, 01:mode A(veille), 10:modeB(balise), 11:mode C 
   uint8_t mac_node[6];
   uint32_t dernier_timestamp_reçu; // derniere reception de message en 6s
   uint32_t dernier_tick6s; // en 6s
   bool offset_valide;
+  uint8_t num_sequentiel;
   uint16_t head;
   uint16_t tail;
   uint8_t queue_tx[NB_OCTETS_NODE_TX];
@@ -289,6 +295,7 @@ typedef enum {
   EVENT_ERREUR,
   EVENT_ECOUTE_WebSock,
   EVENT_GATEWAY_QUEUE,
+  EVENT_REVEIL_PERIODIQUE,
   EVENT_WATCHDOG,
   EVENT_24H,
   EVENT_3min,

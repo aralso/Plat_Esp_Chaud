@@ -57,7 +57,6 @@ uint16_t C_temp;
 uint16_t C_hum;
 uint16_t C_HA;
 uint16_t C_batt;
-int8_t last_rssi;
 
 int16_t batt_sonde[NB_CAPT_AFF][NB_VAL_HISTO_BATT];  // 20 dernieres valeurs batterie sonde remode
 
@@ -70,11 +69,9 @@ RTC_NOINIT_ATTR uint8_t Graph_val[NB_Graphique][NB_STRAT_CAPT];  // 0:pas de gra
 uint32_t Graph_duree[NB_STRAT_CAPT];  // durée fenêtre graphique en secondes par stratégie
 uint8_t  strat_actif = 0;             // indice de la stratégie d'affichage active (0..NB_STRAT_CAPT-1)
 
-volatile uint8_t ackReceived = false;  // global pour indiquer que le peer a acké
-volatile int ackChannel = -1;       // canal où ça a marché
-uint8_t num_sequentiel;  // pour Ack
 
 extern AsyncWebServer server;
+extern uint8_t My_statut; // 0:inconnu 1:veille 2:balise 3:tj actif
 
 
 void OnDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len);
@@ -92,6 +89,7 @@ float absoluteHumidity(float temperature, float relativeHumidity);
 size_t node_buffer_used(uint8_t node);
 uint8_t traitement_queue_data_gateway(uint8_t mise_veille, uint8_t node);
 void liste_des_nodes(void);
+uint8_t conversion_node(uint8_t emetteur, uint8_t *node);
 
 
 #ifdef Temp_int_DS18B20
@@ -149,6 +147,7 @@ void init_10_secondes()
 void setup_0()
 {
 
+    My_Address = SERVER_ADD;
     BTN_PIN[0] = PIN_REVEIL;  // Pins des boutons
 
   /*if (NB_Graphique==6)
@@ -316,8 +315,9 @@ void enreg_24h(uint8_t)
 {
 }
 
-void setup_appli()
+uint8_t setup_appli()
 {
+  return 1;
 }
 
 void setupRoutes_appli()
@@ -360,7 +360,7 @@ void init_rtc_variables_appli()
     {
         // initialisation des variables pour chaque Node
         Node[i].Add_node = 0;
-        Node[i].statut =0;
+        Node[i].Nstatut =0;
     }
 
 }
@@ -563,7 +563,7 @@ void init_capt_from_sd()
   }
   dir.close();
   nb_capt_sdcard = count;
-  Serial.printf("init_capt_from_sd: %d capteurs trouvés sur la SD\n\r", nb_capt_sdcard);
+  if (log_detail>=2)Serial.printf("init_capt_from_sd: %d capteurs trouves sur la SD\n\r", nb_capt_sdcard);
 
   // Tri à bulles décroissant sur last_write (plus récent = ordre le plus bas)
   for (uint8_t i = 0; i < count; i++) {
@@ -596,7 +596,7 @@ void init_capt_from_sd()
     }
   }
 
-  Serial.printf("init_capt_from_sd: %d capteurs chargés\n\r", count);
+  if (log_detail>=1) Serial.printf("init_capt_from_sd: %d capteurs charges\n\r", count);
 }
 
 // type 1
@@ -1031,37 +1031,8 @@ void liste_des_nodes()
   Serial.println("Liste des nodes :");
   for (uint8_t i = 0; i < NB_CAPT; i++)
   {
-      Serial.printf("Index %d : Node %02X statut: %02X nbmess_rx: %i head:%i tail:%i\n\r", i, Node[i].Add_node, Node[i].statut, Node[i].nb_mess_recu, Node[i].head, Node[i].tail);
+      Serial.printf("Index %d : Node %02X statut: %02X nbmess_rx: %i head:%i tail:%i\n\r", i, Node[i].Add_node, Node[i].Nstatut, Node[i].nb_mess_recu, Node[i].head, Node[i].tail);
   }
-}
-// 0:node trouvé
-// 1:échec
-// 2:nouveau node ajouté
-uint8_t conversion_node(uint8_t emetteur, uint8_t *node)
-{
-  // Implémentation de la conversion du nœud
-  for (uint8_t i = 0; i < NB_CAPT; i++) {
-    if (Node[i].Add_node == emetteur) {
-      *node = i;
-      if (log_detail>=3) Serial.printf("Node %c trouve a l'index %d\n\r", emetteur, i);
-      return 0; // Succès
-    }
-  }
-  // verif s'il reste des places vides pour de nouveaux nodes
-  for (uint8_t i = 0; i < NB_CAPT; i++) {
-    if (log_detail>=2) Serial.printf("Node[%d] = %02X\n\r", i, Node[i].Add_node);
-    if (Node[i].Add_node == 0) { // place vide
-      Node[i].Add_node = emetteur;
-      *node = i;
-      Node[i].nb_mess_recu = 0; // initialiser l'état du nœud
-      Node[i].statut = 0b01; // mode A (veille)
-      Node[i].dernier_timestamp_reçu = 0;
-      Node[i].dernier_tick6s = 0;
-      Node[i].offset_valide = false;
-      return 2; // Succès
-    }
-  } 
-  return 1; // Échec
 }
 
 #ifdef ESP_TJ_ACTIF
@@ -1075,35 +1046,9 @@ uint8_t conversion_node(uint8_t emetteur, uint8_t *node)
     uint8_t code;
     uint8_t code2;
     uint8_t payload[MAX_PAYLOAD];
-} Message_EspNow;*/
+} Message_Struct;*/
 
-void OnDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
-  if (len > (int)sizeof(Message_EspNow)) {
-    Serial.println("⚠️ message trop long");
-    return;
-  }
 
-  EspNowRecvMsg_t espRecv;
-
-  // niveau de réception RSSI
-  if (info != nullptr && info->rx_ctrl != nullptr)  last_rssi = info->rx_ctrl->rssi;
-  else last_rssi=0;
-  espRecv.rssi = last_rssi;
-
-  memcpy(espRecv.src_addr, info->src_addr, 6);
-  memcpy(&espRecv.msg, data, len);
-  espRecv.len = len;
-
-  if (xQueueSend(QueueEspNow, &espRecv, 0) != pdTRUE) {
-    Serial.println("⚠️ QueueEspNow pleine");
-    return;
-  }
-  systeme_eve_t evt = { EVENT_ESP_RECV, 0 };
-  if (xQueueSend(eventQueue, &evt, 0) != pdTRUE) {
-    erreur_queue++;
-    Serial.println("⚠️ eventQueue pleine (ESP_RECV)");
-  }
-}
 
 static void timer_recalage_callback(TimerHandle_t timer)
 {
@@ -1148,7 +1093,7 @@ void traitement_recalage_espnow(uint8_t node)
   time(&timestamp);
   uint32_t timestamp32 = static_cast<uint32_t>(timestamp);
   time_t timestamp_origine = timestamp - dernier_tick*6;
-  Serial.printf("Timestamp actuel: %u, Timestamp origine: %u dernier_tick: %u\n\r", timestamp32, (uint32_t)timestamp_origine, dernier_tick);
+  if (log_detail>=4) Serial.printf("Timestamp actuel: %u, Timestamp origine: %u dernier_tick: %u\n\r", timestamp32, (uint32_t)timestamp_origine, dernier_tick);
 
   lecture = SD_MMC.open(nomProvisoire, FILE_READ);
   File definitif = SD_MMC.open(nomFichier, FILE_APPEND);
@@ -1181,13 +1126,14 @@ void traitement_recalage_espnow(uint8_t node)
 }
 
 
-void traitement_espnow_recv(EspNowRecvMsg_t &recv) {
-  Message_EspNow &msg = recv.msg;
+void traitement_espnow_recv(EspNowRecvMsg_t &recv)
+{
+  Message_Struct &msg = recv.msg;
   int len = recv.len;
   uint8_t *src_addr = recv.src_addr;
 
   // 🔍 DIAGNOSTIC: Afficher infos de réception
-  if (log_detail >=1)  Serial.println("\n📥 ========== RECEPTION ESP-NOW ==========");
+  if (log_detail >=1)  Serial.println("\n📥 ======= RECEPTION ESP-NOW =======");
   if (log_detail>=2) 
   {
     for (int i = 0; i < 6; i++) {
@@ -1198,27 +1144,28 @@ void traitement_espnow_recv(EspNowRecvMsg_t &recv) {
   }
   
   // Afficher le canal WiFi actuel
-  uint8_t current_channel;
+  /*uint8_t current_channel;
   wifi_second_chan_t second;
   esp_wifi_get_channel(&current_channel, &second);
   if (log_detail>=3) Serial.printf("   Canal WiFi actuel: %d\n\r", current_channel);
-  if (log_detail>=3) Serial.printf("   Taille reçue: %d octets\n\r", len);
+  if (log_detail>=3) Serial.printf("   Taille recue: %d octets\n\r", len);*/
 
   num_sequentiel = msg.num_seq;
   uint8_t renvoi_ack=0;
 
-  if (log_detail>=1)
+  /*if (log_detail<=3)
   {
+    Serial.printf("   Donnees recues: ");
     for (uint8_t i = 0; i < len; i++) Serial.printf("%02X ", ((uint8_t*)&msg)[i]);
     Serial.println();
-  }
-  if ((msg.destinataire & 0x7F) == SERVER_ADD)
+  }*/
+  if ((msg.destinataire & 0x7F) == My_Address)
   {
     uint8_t node;
     uint8_t res_node = conversion_node(msg.emetteur, &node);
     if (res_node!=1)   // sinon plus de place node, message ignoré
     {
-      Node[node].statut = msg.statut & 0x03;  // bits0-1:00:inactif, 01:mode A(veille), 10:modeB(balise), 11:mode C 
+      Node[node].Nstatut = msg.statut & 0x03;  // bits0-1:00:inactif, 01:mode A(veille), 10:modeB(balise), 11:mode C 
       memcpy(Node[node].mac_node, src_addr, 6);
 
       if (log_detail>=3) Serial.printf("Message destine au serveur de %c node:%i\n\r", msg.emetteur, res_node);
@@ -1305,7 +1252,7 @@ void traitement_espnow_recv(EspNowRecvMsg_t &recv) {
                 return;
               }
               time_t timestamp_origine = timestamp - Cap_tick[nb_valeurs-1]*6;
-              Serial.printf("Timestamp origine: %lu\n", (unsigned long)timestamp_origine);
+              if (log_detail>=4) Serial.printf("Timestamp origine: %lu\n\r", (unsigned long)timestamp_origine);
               for (uint8_t nb = 0; nb < nb_valeurs; nb++) {
                 time_t mesure = timestamp_origine + Cap_tick[nb]*6;
                 char buffer[50];
@@ -1385,13 +1332,16 @@ void traitement_espnow_recv(EspNowRecvMsg_t &recv) {
       // renvoie un Accusé reception
       if (renvoi_ack==1)
       {
-        Message_EspNow ack_msg;
+        Message_Struct ack_msg;
         ack_msg.destinataire = msg.emetteur | 0x80;
         ack_msg.emetteur = SERVER_ADD ;  // bit fort à 1 pour indiquer que c'est un message hexadécimal  
-        ack_msg.longueur = 3+0;  // longueur du payload
-        ack_msg.code = 'A';    // code pour ACK
-        ack_msg.code2 = 0;     // pas de sous-code
+        ack_msg.longueur = 4+0;  // longueur du payload
         ack_msg.num_seq = num_sequentiel;  // renvoyer le numéro séquentiel reçu
+        ack_msg.statut = 1;  // ce node est en veille
+       if (My_statut == 3)  ack_msg.statut = 0b11; // mode actif
+        ack_msg.code = 'K';    // code pour ACK
+        ack_msg.code2 = 0;     // 0 si pas de message à envoyer, 1 si il y en a.
+        if (node_buffer_used(node) > 0) ack_msg.code2 = 1;
 
         esp_now_peer_info_t peer = {};
         memcpy(peer.peer_addr, src_addr, ESP_NOW_ETH_ALEN);
@@ -1409,18 +1359,18 @@ void traitement_espnow_recv(EspNowRecvMsg_t &recv) {
           }
         } 
             
-        if (log_detail>=3) Serial.printf("src_addr:%02x:%02x:%02x:%02x:%02x:%02x dest:%02X emetteur:%02X long:%d code:%c code2:%d num_seq:%d\n",
+        if (log_detail>=2) Serial.printf("src_addr:%02x:%02x:%02x:%02x:%02x:%02x dest:%02X emetteur:%02X long:%d num_seq:%d stat:%02X code:%c code2:%02X \n",
                       src_addr[0], src_addr[1], src_addr[2], src_addr[3], src_addr[4], src_addr[5],
-                      ack_msg.destinataire, ack_msg.emetteur, ack_msg.longueur, ack_msg.code, ack_msg.code2, ack_msg.num_seq);
+                      ack_msg.destinataire, ack_msg.emetteur, ack_msg.longueur, ack_msg.num_seq, ack_msg.statut, ack_msg.code, ack_msg.code2);
         esp_err_t result = esp_now_send(src_addr, (uint8_t *)&ack_msg, ack_msg.longueur+3);
         if (result == ESP_OK) {
-          if (log_detail>=3) Serial.println(" Accuse de reception envoye");
+          if (log_detail>=2) Serial.println(" Accuse de reception envoye");
         } else {
           Serial.printf("❌ Erreur envoi ACK: %i\n", result);
         }
       }
-      Serial.printf("Statut du message: %02X, Statut du node: %02X\n\r", msg.statut&0x3F, Node[node].statut);
-      if ((msg.statut & 4) && ((Node[node].statut & 3) == 0b01)) // c'est le dernier message de ce node, et il est en mode A
+      if (log_detail>=1) Serial.printf("Statut du message: %02X, Statut du node: %02X\n\r", msg.statut&0x3F, Node[node].Nstatut);
+      if ((msg.statut & 4) && ((Node[node].Nstatut & 3) == 0b01)) // c'est le dernier message de ce node, et il est en mode A-veille
       {
         // y at-il des messages a envoyer vers ce node, dans la queue
         if (node_buffer_used(node))
@@ -1432,7 +1382,6 @@ void traitement_espnow_recv(EspNowRecvMsg_t &recv) {
         {
           if (log_detail >= 1)  Serial.println("Pas de message a envoyer dans le buffer");
         }
-
       }
     }
     else Serial.printf("plus de place pour node:%d\n", msg.emetteur);
@@ -1528,7 +1477,7 @@ uint8_t envoi_now(uint8_t id_node, uint8_t channel, esp_now_peer_info_t * peerIn
   */
 
   // Envoi Température
-  Message_EspNow message;
+  Message_Struct message;
   
   // 🔍 DIAGNOSTIC: Afficher les infos avant envoi
   /*Serial.printf("📤 Tentative envoi sur canal %d vers MAC: %02X:%02X:%02X:%02X:%02X:%02X\n",

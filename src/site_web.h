@@ -479,6 +479,8 @@ const char index_html[] PROGMEM = R"rawliteral(
                   8 : Skip graph : 1 valeur sur X<br>
                   9 : Seuil batt sonde<br>
                   10: Freq Log batterie(jours)<br>
+                  11: Reglage date<r>
+                  12: Reglage heure<r>
                   15 : pas de veille<br>
                   16 : prolong veille<br>
                   17 : action stockage<br>
@@ -549,6 +551,12 @@ const char index_html[] PROGMEM = R"rawliteral(
               <input id="Action_reg" type="text" minlength="4" maxlength="8" size="8" placeholder="action">
               <input id="Action_data" type="text" minlength="4" maxlength="8" size="8" placeholder="valeur">
               <button id="ActionBtn">Lancer Action</button>
+            </div>
+            <div>
+              <label for="NodeMessage">Message Node :</label>
+              <input id="NodeMessage" type="text" maxlength="200" size="30"
+                     placeholder="adresse puis message">
+              <button id="NodeMessageBtn">Envoi</button>
             </div>
             <pre id="actionResult"></pre>
 
@@ -1364,6 +1372,24 @@ const char index_html[] PROGMEM = R"rawliteral(
           resultA.textContent = 'Erreur lors de l’envoi';
           console.error('Erreur fetch :', err);
          });
+    });
+
+    document.getElementById('NodeMessageBtn').addEventListener('click', () => {
+      const message = document.getElementById('NodeMessage').value;
+      const resultA = document.getElementById('actionResult');
+      if (message.length < 2) {
+        resultA.textContent = 'Saisissez l’adresse du node puis le message';
+        return;
+      }
+      const query = `/Set?type=5&reg=MSG&val=${encodeURIComponent(message)}`;
+      resultA.textContent = 'Envoi en cours…';
+      fetch(query)
+        .then(response => response.text())
+        .then(text => { resultA.textContent = text; })
+        .catch(err => {
+          resultA.textContent = 'Erreur lors de l’envoi';
+          console.error('Erreur fetch :', err);
+        });
     });
 
     document.getElementById('loadLogsBtn').addEventListener('click', () => {
